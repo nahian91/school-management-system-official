@@ -1,0 +1,1306 @@
+<?php
+/**
+ * Academic Subjects Management & Mark Distribution Engine
+ * File: inc/academics/class-subjects.php
+ * Text Domain: ifsedu-school-management
+ */
+
+if ( ! defined( 'ABSPATH' ) ) { 
+    exit; 
+}
+
+function educore_render_subjects_view() {
+    global $wpdb;
+    $table_units    = $wpdb->prefix . 'sms_academic_units';
+    $table_subjects = $wpdb->prefix . 'sms_subjects';
+
+    if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'edit_posts' ) ) {
+        wp_die( esc_html__( 'You do not have sufficient permissions to manage academic subjects.', 'ifsedu-school-management' ) );
+    }
+
+    $base_url = add_query_arg(
+        array(
+            'page'   => 'school_management_system',
+            'tab'    => 'academics',
+            'subtab' => 'subjects',
+        ),
+        admin_url( 'admin.php' )
+    );
+
+    // --------------------------------------------------------------------------
+    // 1. DIRECT FORM SUBMISSION: SINGLE SUBJECT UPDATE
+    // --------------------------------------------------------------------------
+    $req_method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+
+    if ( 'POST' === $req_method && isset( $_POST['educore_update_single_subject'] ) ) {
+        if ( isset( $_POST['edit_subject_nonce_field'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['edit_subject_nonce_field'] ) ), 'ifs_educore_edit_subject_nonce' ) ) {
+            $sub_id      = isset( $_POST['subject_id'] ) ? absint( wp_unslash( $_POST['subject_id'] ) ) : 0;
+            $unit_keys   = ( isset( $_POST['class_units'] ) && is_array( $_POST['class_units'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['class_units'] ) ) : array();
+            $sub_name    = isset( $_POST['subject_name'] ) ? sanitize_text_field( wp_unslash( $_POST['subject_name'] ) ) : '';
+            $sub_code    = isset( $_POST['subject_code'] ) ? sanitize_text_field( wp_unslash( $_POST['subject_code'] ) ) : '';
+            $sub_order   = isset( $_POST['subject_order'] ) ? intval( wp_unslash( $_POST['subject_order'] ) ) : 0;
+            $tot_m       = isset( $_POST['total_marks'] ) ? floatval( wp_unslash( $_POST['total_marks'] ) ) : 100.00;
+            $pass_m      = isset( $_POST['pass_marks'] ) ? floatval( wp_unslash( $_POST['pass_marks'] ) ) : 33.00;
+            $cq_m        = isset( $_POST['cq_marks'] ) ? floatval( wp_unslash( $_POST['cq_marks'] ) ) : 0.00;
+            $cq_p        = isset( $_POST['cq_pass'] ) ? floatval( wp_unslash( $_POST['cq_pass'] ) ) : 0.00;
+            $mcq_m       = isset( $_POST['mcq_marks'] ) ? floatval( wp_unslash( $_POST['mcq_marks'] ) ) : 0.00;
+            $mcq_p       = isset( $_POST['mcq_pass'] ) ? floatval( wp_unslash( $_POST['mcq_pass'] ) ) : 0.00;
+            $pr_m        = isset( $_POST['practical_marks'] ) ? floatval( wp_unslash( $_POST['practical_marks'] ) ) : 0.00;
+            $pr_p        = isset( $_POST['practical_pass'] ) ? floatval( wp_unslash( $_POST['practical_pass'] ) ) : 0.00;
+
+            if ( $sub_id > 0 && ! empty( $unit_keys ) && ! empty( $sub_name ) ) {
+                $target_unit_ids = array();
+                foreach ( $unit_keys as $ukey ) {
+                    if ( strpos( $ukey, 'id:' ) === 0 ) {
+                        $target_unit_ids[] = absint( str_replace( 'id:', '', $ukey ) );
+                    } elseif ( strpos( $ukey, 'class:' ) === 0 ) {
+                        $c_name = sanitize_text_field( str_replace( 'class:', '', $ukey ) );
+                        $c_ids  = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM `{$table_units}` WHERE class_name = %s", $c_name ) );
+                        if ( ! empty( $c_ids ) ) {
+                            $target_unit_ids = array_merge( $target_unit_ids, array_map( 'absint', $c_ids ) );
+                        }
+                    }
+                }
+                $target_unit_ids = array_values( array_unique( array_filter( $target_unit_ids ) ) );
+
+                if ( ! empty( $target_unit_ids ) ) {
+                    $primary_unit_id = $target_unit_ids[0];
+
+                    $wpdb->update(
+                        $table_subjects,
+                        array(
+                            'class_id'        => $primary_unit_id,
+                            'subject_name'    => $sub_name,
+                            'subject_code'    => $sub_code,
+                            'subject_order'   => $sub_order,
+                            'total_marks'     => $tot_m,
+                            'pass_marks'      => $pass_m,
+                            'cq_marks'        => $cq_m,
+                            'cq_pass'         => $cq_p,
+                            'mcq_marks'       => $mcq_m,
+                            'mcq_pass'        => $mcq_p,
+                            'practical_marks' => $pr_m,
+                            'practical_pass'  => $pr_p,
+                        ),
+                        array( 'id' => $sub_id ),
+                        array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f' ),
+                        array( '%d' )
+                    );
+
+                    for ( $i = 1; $i < count( $target_unit_ids ); $i++ ) {
+                        $other_unit_id = $target_unit_ids[ $i ];
+                        $exists_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$table_subjects}` WHERE class_id = %d AND subject_name = %s LIMIT 1", $other_unit_id, $sub_name ) );
+
+                        if ( ! $exists_id ) {
+                            $wpdb->insert(
+                                $table_subjects,
+                                array(
+                                    'class_id'        => $other_unit_id,
+                                    'subject_name'    => $sub_name,
+                                    'subject_code'    => $sub_code,
+                                    'subject_order'   => $sub_order,
+                                    'total_marks'     => $tot_m,
+                                    'pass_marks'      => $pass_m,
+                                    'cq_marks'        => $cq_m,
+                                    'cq_pass'         => $cq_p,
+                                    'mcq_marks'       => $mcq_m,
+                                    'mcq_pass'        => $mcq_p,
+                                    'practical_marks' => $pr_m,
+                                    'practical_pass'  => $pr_p,
+                                ),
+                                array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f' )
+                            );
+                        }
+                    }
+                }
+
+                $redirect_target = add_query_arg( array( 'status' => 'updated' ), $base_url );
+                if ( ! headers_sent() ) {
+                    wp_safe_redirect( $redirect_target );
+                    exit;
+                } else {
+                    echo '<script type="text/javascript">window.location.href=' . wp_json_encode( esc_url_raw( $redirect_target ) ) . ';</script>';
+                    exit;
+                }
+            }
+        }
+    }
+
+    // --------------------------------------------------------------------------
+    // 2. REPEATER SUBMISSION (BULK ASSIGN)
+    // --------------------------------------------------------------------------
+    if ( 'POST' === $req_method && isset( $_POST['save_subjects_repeater'] ) ) {
+        if ( isset( $_POST['subject_setup_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['subject_setup_nonce'] ) ), 'subject_setup_action' ) ) {
+            $unit_keys       = ( isset( $_POST['class_units'] ) && is_array( $_POST['class_units'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['class_units'] ) ) : array();
+            $subject_name    = ( isset( $_POST['subject_name'] ) && is_array( $_POST['subject_name'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['subject_name'] ) ) : array();
+            $subject_code    = ( isset( $_POST['subject_code'] ) && is_array( $_POST['subject_code'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['subject_code'] ) ) : array();
+            $subject_order   = ( isset( $_POST['subject_order'] ) && is_array( $_POST['subject_order'] ) ) ? array_map( 'intval', wp_unslash( $_POST['subject_order'] ) ) : array();
+            $total_marks     = ( isset( $_POST['total_marks'] ) && is_array( $_POST['total_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['total_marks'] ) ) : array();
+            $pass_marks      = ( isset( $_POST['pass_marks'] ) && is_array( $_POST['pass_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['pass_marks'] ) ) : array();
+            $cq_marks        = ( isset( $_POST['cq_marks'] ) && is_array( $_POST['cq_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['cq_marks'] ) ) : array();
+            $cq_pass         = ( isset( $_POST['cq_pass'] ) && is_array( $_POST['cq_pass'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['cq_pass'] ) ) : array();
+            $mcq_marks       = ( isset( $_POST['mcq_marks'] ) && is_array( $_POST['mcq_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['mcq_marks'] ) ) : array();
+            $mcq_pass        = ( isset( $_POST['mcq_pass'] ) && is_array( $_POST['mcq_pass'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['mcq_pass'] ) ) : array();
+            $practical_marks = ( isset( $_POST['practical_marks'] ) && is_array( $_POST['practical_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['practical_marks'] ) ) : array();
+            $practical_pass  = ( isset( $_POST['practical_pass'] ) && is_array( $_POST['practical_pass'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['practical_pass'] ) ) : array();
+
+            if ( ! empty( $unit_keys ) && ! empty( $subject_name ) ) {
+                $target_unit_ids = array();
+                foreach ( $unit_keys as $ukey ) {
+                    if ( strpos( $ukey, 'id:' ) === 0 ) {
+                        $target_unit_ids[] = absint( str_replace( 'id:', '', $ukey ) );
+                    } elseif ( strpos( $ukey, 'class:' ) === 0 ) {
+                        $c_name = sanitize_text_field( str_replace( 'class:', '', $ukey ) );
+                        $c_ids  = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM `{$table_units}` WHERE class_name = %s", $c_name ) );
+                        if ( ! empty( $c_ids ) ) {
+                            $target_unit_ids = array_merge( $target_unit_ids, array_map( 'absint', $c_ids ) );
+                        }
+                    }
+                }
+                $target_unit_ids = array_values( array_unique( array_filter( $target_unit_ids ) ) );
+
+                $inserted_count = 0;
+                if ( ! empty( $target_unit_ids ) ) {
+                    foreach ( $target_unit_ids as $c_id ) {
+                        $c_id_int = absint( $c_id );
+                        if ( $c_id_int <= 0 ) {
+                            continue;
+                        }
+
+                        foreach ( $subject_name as $index => $name ) {
+                            $s_name = sanitize_text_field( (string) $name );
+                            if ( empty( $s_name ) ) {
+                                continue;
+                            }
+
+                            $s_code      = isset( $subject_code[ $index ] ) ? sanitize_text_field( (string) $subject_code[ $index ] ) : '';
+                            $s_order     = isset( $subject_order[ $index ] ) ? intval( $subject_order[ $index ] ) : ( $index + 1 );
+                            $s_total     = ( isset( $total_marks[ $index ] ) && floatval( $total_marks[ $index ] ) > 0 ) ? floatval( $total_marks[ $index ] ) : 100.00;
+                            $s_pass      = isset( $pass_marks[ $index ] ) ? floatval( $pass_marks[ $index ] ) : 33.00;
+                            $s_cq        = isset( $cq_marks[ $index ] ) ? floatval( $cq_marks[ $index ] ) : 70.00;
+                            $s_cq_p      = isset( $cq_pass[ $index ] ) ? floatval( $cq_pass[ $index ] ) : 23.00;
+                            $s_mcq       = isset( $mcq_marks[ $index ] ) ? floatval( $mcq_marks[ $index ] ) : 30.00;
+                            $s_mcq_p     = isset( $mcq_pass[ $index ] ) ? floatval( $mcq_pass[ $index ] ) : 10.00;
+                            $s_practical = isset( $practical_marks[ $index ] ) ? floatval( $practical_marks[ $index ] ) : 0.00;
+                            $s_pr_p      = isset( $practical_pass[ $index ] ) ? floatval( $practical_pass[ $index ] ) : 0.00;
+
+                            $wpdb->insert( 
+                                $table_subjects, 
+                                array( 
+                                    'class_id'        => $c_id_int, 
+                                    'subject_name'    => $s_name, 
+                                    'subject_code'    => $s_code, 
+                                    'subject_order'   => $s_order, 
+                                    'total_marks'     => $s_total, 
+                                    'pass_marks'      => $s_pass, 
+                                    'cq_marks'        => $s_cq, 
+                                    'cq_pass'         => $s_cq_p, 
+                                    'mcq_marks'       => $s_mcq, 
+                                    'mcq_pass'        => $s_mcq_p, 
+                                    'practical_marks' => $s_practical, 
+                                    'practical_pass'  => $s_pr_p, 
+                                ), 
+                                array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f' ) 
+                            );
+                            $inserted_count++;
+                        }
+                    }
+                }
+
+                if ( $inserted_count > 0 ) {
+                    $redirect_target = add_query_arg( array( 'status' => 'subjects_added', 'count' => $inserted_count ), $base_url );
+                    if ( ! headers_sent() ) {
+                        wp_safe_redirect( $redirect_target );
+                        exit;
+                    } else {
+                        echo '<script type="text/javascript">window.location.href=' . wp_json_encode( esc_url_raw( $redirect_target ) ) . ';</script>';
+                        exit;
+                    }
+                }
+            }
+        }
+    }
+
+    // --------------------------------------------------------------------------
+    // 3. HANDLE DELETE ACTION
+    // --------------------------------------------------------------------------
+    if ( isset( $_GET['action'] ) && 'delete_subject' === $_GET['action'] && isset( $_GET['id'] ) ) {
+        $delete_id = absint( wp_unslash( $_GET['id'] ) );
+        $del_nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+
+        if ( $delete_id > 0 && wp_verify_nonce( $del_nonce, 'delete_subject_action_' . $delete_id ) ) {
+            $wpdb->delete( $table_subjects, array( 'id' => $delete_id ), array( '%d' ) );
+
+            $redirect_target = add_query_arg( array( 'status' => 'deleted' ), $base_url );
+            if ( ! headers_sent() ) {
+                wp_safe_redirect( $redirect_target );
+                exit;
+            } else {
+                echo '<script type="text/javascript">window.location.href=' . wp_json_encode( esc_url_raw( $redirect_target ) ) . ';</script>';
+                exit;
+            }
+        }
+    }
+
+    // --------------------------------------------------------------------------
+    // 4. DATA QUERIES (SECTION FOR 9,10,11,12 ONLY)
+    // --------------------------------------------------------------------------
+    $all_raw_units = $wpdb->get_results( "SELECT id, class_name, section_name FROM `{$table_units}` ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC", ARRAY_A );
+
+    $display_units = array();
+    $processed_classes = array();
+
+    if ( ! empty( $all_raw_units ) ) {
+        foreach ( $all_raw_units as $unit ) {
+            $c_name = trim( (string) $unit['class_name'] );
+            $s_name = trim( (string) $unit['section_name'] );
+            $u_id   = absint( $unit['id'] );
+
+            // Extract numeric class number (e.g., '10' from 'Class 10')
+            preg_match( '/\d+/', $c_name, $matches );
+            $c_num = ! empty( $matches ) ? intval( $matches[0] ) : 0;
+
+            // Classes 9, 10, 11, 12 show section/department specifically
+            if ( in_array( $c_num, array( 9, 10, 11, 12 ), true ) ) {
+                $label = $c_name . ( '' !== $s_name ? ' (' . $s_name . ')' : '' );
+                $display_units[] = array(
+                    'key'          => 'id:' . $u_id,
+                    'label'        => $label,
+                    'class_name'   => $c_name,
+                    'section_name' => $s_name,
+                );
+            } else {
+                // Classes 1-8 show ONLY the Class Name (combined)
+                if ( ! in_array( $c_name, $processed_classes, true ) ) {
+                    $display_units[] = array(
+                        'key'          => 'class:' . $c_name,
+                        'label'        => $c_name,
+                        'class_name'   => $c_name,
+                        'section_name' => '',
+                    );
+                    $processed_classes[] = $c_name;
+                }
+            }
+        }
+
+        usort( $display_units, function( $a, $b ) {
+            $res = strnatcasecmp( $a['class_name'], $b['class_name'] );
+            return ( 0 === $res ) ? strnatcasecmp( $a['section_name'], $b['section_name'] ) : $res;
+        } );
+    }
+
+    $subjects_list = $wpdb->get_results( "
+        SELECT s.*, u.class_name, u.section_name 
+        FROM `{$table_subjects}` s 
+        LEFT JOIN `{$table_units}` u ON s.class_id = u.id 
+        ORDER BY CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, s.subject_order ASC, s.subject_name ASC
+    " );
+
+    if ( ! empty( $subjects_list ) && is_array( $subjects_list ) ) {
+        usort( $subjects_list, function( $a, $b ) {
+            $class_a = $a->class_name ?: '';
+            $class_b = $b->class_name ?: '';
+            $res     = strnatcasecmp( (string) $class_a, (string) $class_b );
+            if ( 0 === $res ) {
+                $sec_a   = $a->section_name ?: '';
+                $sec_b   = $b->section_name ?: '';
+                $sec_res = strnatcasecmp( (string) $sec_a, (string) $sec_b );
+                if ( 0 === $sec_res ) {
+                    $order_a = intval( $a->subject_order ?? 0 );
+                    $order_b = intval( $b->subject_order ?? 0 );
+                    if ( $order_a === $order_b ) {
+                        return strnatcasecmp( (string) $a->subject_name, (string) $b->subject_name );
+                    }
+                    return ( $order_a < $order_b ) ? -1 : 1;
+                }
+                return $sec_res;
+            }
+            return $res;
+        } );
+    }
+    ?>
+
+    <style>
+        .ifs-educore-subjects-container {
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            box-sizing: border-box !important;
+            font-family: inherit;
+        }
+        .ifs-educore-bento-card {
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 14px !important;
+            padding: 22px !important;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.02) !important;
+            margin: 0 0 20px 0 !important;
+            box-sizing: border-box !important;
+            height: auto !important;
+            min-height: auto !important;
+            clear: both !important;
+        }
+        .ifs-educore-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #f1f5f9;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .ifs-educore-card-title {
+            font-size: 15px;
+            font-weight: 800;
+            color: #0f172a;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .ifs-educore-form-label {
+            display: block;
+            font-size: 12.5px;
+            font-weight: 700;
+            color: #334155;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+            margin-bottom: 6px;
+        }
+        .ifs-educore-field-input,
+        .ifs-educore-field-select {
+            width: 100%;
+            height: 40px;
+            padding: 0 12px;
+            border: 1.5px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 13.5px;
+            color: #0f172a;
+            background: #ffffff;
+            box-sizing: border-box;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .ifs-educore-field-input:focus,
+        .ifs-educore-field-select:focus {
+            border-color: #00523c;
+            box-shadow: 0 0 0 3px rgba(0, 82, 60, 0.12);
+        }
+
+        /* Class Selector Panel */
+        .ifs-class-selector-panel {
+            background: #f8fafc !important;
+            border: 1.5px solid #e2e8f0 !important;
+            border-radius: 10px !important;
+            padding: 14px !important;
+            box-sizing: border-box !important;
+        }
+        .ifs-class-panel-toolbar {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+            margin-bottom: 10px !important;
+            padding-bottom: 10px !important;
+            border-bottom: 1px solid #e2e8f0 !important;
+        }
+        .ifs-class-search-input {
+            height: 32px !important;
+            padding: 0 10px !important;
+            font-size: 12.5px !important;
+            border: 1px solid #cbd5e1 !important;
+            border-radius: 6px !important;
+            background: #ffffff !important;
+            max-width: 200px !important;
+            outline: none !important;
+            box-sizing: border-box !important;
+        }
+        .ifs-class-search-input:focus {
+            border-color: #00523c !important;
+        }
+        .ifs-class-toolbar-actions {
+            display: flex !important;
+            align-items: center !important;
+            gap: 8px !important;
+        }
+        .ifs-class-count-badge {
+            font-size: 11.5px !important;
+            font-weight: 700 !important;
+            background: #e2e8f0 !important;
+            color: #475569 !important;
+            padding: 3px 8px !important;
+            border-radius: 999px !important;
+        }
+        .ifs-class-count-badge.has-selected {
+            background: #dcfce7 !important;
+            color: #15803d !important;
+        }
+        .ifs-class-btn-toggle {
+            background: #ffffff !important;
+            border: 1px solid #cbd5e1 !important;
+            color: #334155 !important;
+            padding: 4px 10px !important;
+            border-radius: 6px !important;
+            font-size: 11.5px !important;
+            font-weight: 700 !important;
+            cursor: pointer !important;
+        }
+        .ifs-class-btn-toggle:hover {
+            background: #00523c !important;
+            color: #ffffff !important;
+            border-color: #00523c !important;
+        }
+
+        /* Class Cards Grid */
+        .ifs-class-grid {
+            display: grid !important;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important;
+            gap: 8px !important;
+            max-height: 150px !important;
+            overflow-y: auto !important;
+            padding: 2px !important;
+            box-sizing: border-box !important;
+        }
+        .ifs-class-card {
+            display: flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            padding: 7px 10px !important;
+            border-radius: 6px !important;
+            font-size: 13px !important;
+            font-weight: 600 !important;
+            color: #1e293b !important;
+            cursor: pointer !important;
+            user-select: none !important;
+            box-sizing: border-box !important;
+        }
+        .ifs-class-card:hover {
+            border-color: #94a3b8 !important;
+            background: #f8fafc !important;
+        }
+        .ifs-class-card.is-active {
+            border-color: #00523c !important;
+            background: #f0fdf4 !important;
+            color: #00523c !important;
+        }
+        .ifs-class-card input[type="checkbox"] {
+            margin: 0 !important;
+            width: 15px !important;
+            height: 15px !important;
+            cursor: pointer !important;
+            accent-color: #00523c !important;
+            flex-shrink: 0 !important;
+        }
+
+        /* Repeater Rows */
+        .ifs-educore-repeater-row {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 12px;
+        }
+        .ifs-educore-repeater-grid-top {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1.5fr 36px;
+            gap: 10px;
+            align-items: end;
+            margin-bottom: 10px;
+        }
+        .ifs-educore-repeater-grid-marks {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 10px;
+            background: #ffffff;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+        }
+        .ifs-educore-btn-remove-row {
+            height: 40px;
+            width: 36px;
+            background: #fee2e2;
+            color: #dc2626;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .ifs-educore-btn-remove-row:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+        .ifs-educore-btn-add-repeater {
+            background: #f1f5f9;
+            color: #00523c;
+            border: 1.5px dashed #00523c;
+            padding: 9px 16px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            margin-right: 8px;
+        }
+        .ifs-educore-btn-submit {
+            background: #00523c;
+            color: #ffffff;
+            border: none;
+            padding: 10px 22px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 13.5px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 4px 12px rgba(0, 82, 60, 0.15);
+        }
+        .ifs-educore-btn-submit:hover {
+            background: #047857;
+        }
+        .ifs-educore-architecture-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 13px;
+        }
+        .ifs-educore-architecture-table th {
+            padding: 10px 12px;
+            background: #f8fafc;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            color: #475569;
+            border-bottom: 2px solid #e2e8f0;
+            text-align: left;
+        }
+        .ifs-educore-architecture-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f1f5f9;
+            vertical-align: middle;
+        }
+        .ifs-educore-order-badge {
+            background: #f1f5f9;
+            color: #475569;
+            padding: 2px 7px;
+            border-radius: 5px;
+            font-weight: 700;
+        }
+        .ifs-educore-code-tag {
+            font-size: 11px;
+            background: #f1f5f9;
+            padding: 2px 5px;
+            border-radius: 4px;
+            color: #475569;
+            margin-left: 4px;
+        }
+        .ifs-educore-marks-badge {
+            background: #eff6ff;
+            color: #1d4ed8;
+            padding: 2px 7px;
+            border-radius: 5px;
+            font-weight: 700;
+        }
+        .ifs-educore-breakdown-chip {
+            font-size: 11.5px;
+            color: #334155;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 3px 6px;
+            border-radius: 5px;
+            display: inline-flex;
+            gap: 4px;
+        }
+        .ifs-educore-square-btn {
+            padding: 4px 6px;
+            border-radius: 6px;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border: 1px solid transparent;
+        }
+        .ifs-educore-btn-edit {
+            background: #eff6ff;
+            color: #2563eb;
+            border-color: #bfdbfe;
+        }
+        .ifs-educore-btn-delete {
+            background: #fee2e2;
+            color: #dc2626;
+            border-color: #fecaca;
+        }
+
+        /* Modal */
+        .ifs-educore-modal-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(15, 23, 42, 0.6);
+            z-index: 99999;
+            align-items: center;
+            justify-content: center;
+        }
+        .ifs-educore-modal-backdrop.is-visible {
+            display: flex;
+        }
+        .ifs-educore-modal-card {
+            background: #ffffff;
+            border-radius: 14px;
+            padding: 22px;
+            width: 100%;
+            max-width: 660px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+
+    <div class="ifs-educore-subjects-container">
+
+        <!-- Status Alerts -->
+        <?php 
+        if ( isset( $_GET['status'] ) && 'subjects_added' === $_GET['status'] ) : ?>
+            <div style="background:#ecfdf5; border-left:4px solid #00523c; color:#065f46; padding:10px 14px; border-radius:6px; font-weight:700; margin-bottom:14px;">
+                <span class="dashicons dashicons-yes-alt" style="vertical-align:middle;"></span>
+                <?php 
+                    $added_count = isset( $_GET['count'] ) ? absint( wp_unslash( $_GET['count'] ) ) : 0;
+                    printf( esc_html__( 'Successfully assigned %d subjects across classes.', 'ifsedu-school-management' ), absint( $added_count ) );
+                ?>
+            </div>
+        <?php elseif ( isset( $_GET['status'] ) && 'updated' === $_GET['status'] ) : ?>
+            <div style="background:#eff6ff; border-left:4px solid #2563eb; color:#1e40af; padding:10px 14px; border-radius:6px; font-weight:700; margin-bottom:14px;">
+                <span class="dashicons dashicons-yes-alt" style="vertical-align:middle;"></span>
+                <?php esc_html_e( 'Subject evaluation scheme updated successfully.', 'ifsedu-school-management' ); ?>
+            </div>
+        <?php elseif ( isset( $_GET['status'] ) && 'deleted' === $_GET['status'] ) : ?>
+            <div style="background:#ecfdf5; border-left:4px solid #00523c; color:#065f46; padding:10px 14px; border-radius:6px; font-weight:700; margin-bottom:14px;">
+                <span class="dashicons dashicons-yes-alt" style="vertical-align:middle;"></span>
+                <?php esc_html_e( 'Academic subject deleted successfully.', 'ifsedu-school-management' ); ?>
+            </div>
+        <?php endif; ?>
+
+        <!-- Assign Subjects Bento Card -->
+        <div class="ifs-educore-bento-card">
+            <form method="POST" action="<?php echo esc_url( $base_url ); ?>" id="ifs-educore-main-subject-form">
+                <?php wp_nonce_field( 'subject_setup_action', 'subject_setup_nonce' ); ?>
+                
+                <!-- Target Academic Units Matrix -->
+                <div style="margin-bottom: 16px;">
+                    <label class="ifs-educore-form-label"><?php esc_html_e( 'Target Classes / Streams (Choose One or Multiple)', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                    
+                    <div class="ifs-class-selector-panel">
+                        <div class="ifs-class-panel-toolbar">
+                            <input type="text" id="classSearchInput" class="ifs-class-search-input" placeholder="<?php esc_attr_e( 'Search class or stream...', 'ifsedu-school-management' ); ?>" autocomplete="off">
+                            
+                            <div class="ifs-class-toolbar-actions">
+                                <span class="ifs-class-count-badge" id="selectedClassCountBadge">0 Selected</span>
+                                <button type="button" class="ifs-class-btn-toggle" id="btnToggleAllClasses"><?php esc_html_e( 'Select All', 'ifsedu-school-management' ); ?></button>
+                            </div>
+                        </div>
+
+                        <div class="ifs-class-grid" id="classGridContainer">
+                            <?php if ( ! empty( $display_units ) ) : foreach ( $display_units as $unit ) : ?>
+                                <label class="ifs-class-card" data-class-text="<?php echo esc_attr( strtolower( $unit['label'] ) ); ?>" data-unit-name="<?php echo esc_attr( strtolower( $unit['class_name'] . ' ' . $unit['section_name'] ) ); ?>">
+                                    <input type="checkbox" name="class_units[]" value="<?php echo esc_attr( $unit['key'] ); ?>" class="cb-class">
+                                    <span><?php echo esc_html( $unit['label'] ); ?></span>
+                                </label>
+                            <?php endforeach; else : ?>
+                                <div style="font-size:12.5px; color:#ef4444; padding: 10px; font-weight:700; grid-column: 1 / -1; text-align: center;">
+                                    <?php esc_html_e( 'No classes configured yet in Academic Setup.', 'ifsedu-school-management' ); ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="ifs-educore-subject-repeater-canvas" class="ifs-educore-repeater-canvas">
+                    <div class="ifs-educore-repeater-row">
+                        <!-- Row Top -->
+                        <div class="ifs-educore-repeater-grid-top">
+                            <div>
+                                <label class="ifs-educore-form-label"><?php esc_html_e( 'Subject Title', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                                <input type="text" name="subject_name[]" class="ifs-educore-field-input" placeholder="e.g. Bangla / English" required>
+                            </div>
+                            <div>
+                                <label class="ifs-educore-form-label"><?php esc_html_e( 'Code', 'ifsedu-school-management' ); ?></label>
+                                <input type="text" name="subject_code[]" class="ifs-educore-field-input" placeholder="e.g. 101">
+                            </div>
+                            <div>
+                                <label class="ifs-educore-form-label"><?php esc_html_e( 'Order', 'ifsedu-school-management' ); ?></label>
+                                <input type="number" name="subject_order[]" class="ifs-educore-field-input f-order" value="1" placeholder="1">
+                            </div>
+                            <div>
+                                <label class="ifs-educore-form-label"><?php esc_html_e( 'Distribution Preset', 'ifsedu-school-management' ); ?></label>
+                                <select class="ifs-educore-field-select preset-selector">
+                                    <option value="gen_100">General (70/30)</option>
+                                    <option value="sci_100">Science (50/25/25)</option>
+                                    <option value="lang_100">Language (100 CQ)</option>
+                                    <option value="jun_50">Junior Tier (35/15)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <button type="button" class="ifs-educore-btn-remove-row btn-remove-row" disabled>
+                                    <span class="dashicons dashicons-no"></span>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Row Marks -->
+                        <div class="ifs-educore-repeater-grid-marks">
+                            <div>
+                                <label class="ifs-educore-form-label"><?php esc_html_e( 'Total / Pass', 'ifsedu-school-management' ); ?></label>
+                                <div style="display:flex; gap:6px;">
+                                    <input type="number" step="0.5" name="total_marks[]" class="ifs-educore-field-input f-total" value="100" placeholder="Total" required>
+                                    <input type="number" step="0.5" name="pass_marks[]" class="ifs-educore-field-input f-pass" value="33" placeholder="Pass">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="ifs-educore-form-label"><?php esc_html_e( 'CQ (Total / Pass)', 'ifsedu-school-management' ); ?></label>
+                                <div style="display:flex; gap:6px;">
+                                    <input type="number" step="0.5" name="cq_marks[]" class="ifs-educore-field-input f-cq" value="70">
+                                    <input type="number" step="0.5" name="cq_pass[]" class="ifs-educore-field-input f-cq-pass" value="23">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="ifs-educore-form-label"><?php esc_html_e( 'MCQ (Total / Pass)', 'ifsedu-school-management' ); ?></label>
+                                <div style="display:flex; gap:6px;">
+                                    <input type="number" step="0.5" name="mcq_marks[]" class="ifs-educore-field-input f-mcq" value="30">
+                                    <input type="number" step="0.5" name="mcq_pass[]" class="ifs-educore-field-input f-mcq-pass" value="10">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="ifs-educore-form-label"><?php esc_html_e( 'Practical (Tot / Pass)', 'ifsedu-school-management' ); ?></label>
+                                <div style="display:flex; gap:6px;">
+                                    <input type="number" step="0.5" name="practical_marks[]" class="ifs-educore-field-input f-pr" value="0">
+                                    <input type="number" step="0.5" name="practical_pass[]" class="ifs-educore-field-input f-pr-pass" value="0">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top:14px;">
+                    <button type="button" id="ifs-educore-btn-add-subject" class="ifs-educore-btn-add-repeater">
+                        <span class="dashicons dashicons-plus-alt2"></span>
+                        <?php esc_html_e( 'Add Another Subject Row', 'ifsedu-school-management' ); ?>
+                    </button>
+
+                    <button type="submit" name="save_subjects_repeater" class="ifs-educore-btn-submit">
+                        <span class="dashicons dashicons-saved"></span>
+                        <?php esc_html_e( 'Save All Subjects', 'ifsedu-school-management' ); ?>
+                    </button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Mapped Subjects Table Bento Card -->
+        <div class="ifs-educore-bento-card">
+            <div class="ifs-educore-card-header">
+                <h5 class="ifs-educore-card-title">
+                    <span class="dashicons dashicons-list-view"></span>
+                    <?php esc_html_e( 'Academic Subjects Directory', 'ifsedu-school-management' ); ?>
+                </h5>
+                
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <select id="ifs-educore-class-filter" class="ifs-educore-field-select" style="max-width:200px; height:34px;">
+                        <option value="all"><?php esc_html_e( '-- All Classes Filter --', 'ifsedu-school-management' ); ?></option>
+                        <?php foreach ( $display_units as $unit ) : ?>
+                            <option value="<?php echo esc_attr( strtolower( $unit['label'] ) ); ?>"><?php echo esc_html( $unit['label'] ); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+
+                    <span style="background:#f1f5f9; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:700; color:#475569;" id="ifs-educore-subject-count-pill">
+                        <?php echo count( $subjects_list ); ?> <?php esc_html_e( 'Subjects', 'ifsedu-school-management' ); ?>
+                    </span>
+                </div>
+            </div>
+
+            <div style="overflow-x:auto;">
+                <table class="ifs-educore-architecture-table" id="ifs-educore-subjects-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 6%; text-align:center;"><?php esc_html_e( 'Order', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 18%;"><?php esc_html_e( 'Class / Section', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 25%;"><?php esc_html_e( 'Subject Details', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 15%;"><?php esc_html_e( 'Full / Pass', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 24%;"><?php esc_html_e( 'Mark Distribution (CQ / MCQ / PR)', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 12%; text-align:right;"><?php esc_html_e( 'Actions', 'ifsedu-school-management' ); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if ( ! empty( $subjects_list ) ) : foreach ( $subjects_list as $sub_item ) : 
+                            $sub_internal_id = absint( $sub_item->id );
+                            $delete_url = wp_nonce_url( 
+                                add_query_arg( array( 'action' => 'delete_subject', 'id' => $sub_internal_id ), $base_url ), 
+                                'delete_subject_action_' . $sub_internal_id 
+                            );
+                            $class_label = ! empty( $sub_item->class_name ) ? $sub_item->class_name . ( ! empty( $sub_item->section_name ) ? ' (' . $sub_item->section_name . ')' : '' ) : 'N/A';
+                            $row_class_attr = ! empty( $sub_item->class_name ) ? strtolower( trim( (string) $sub_item->class_name ) ) : '';
+                            $row_filter_tag = strtolower( trim( (string) $class_label ) );
+                        ?>
+                            <tr data-class-name="<?php echo esc_attr( $row_class_attr ); ?>" data-filter-tag="<?php echo esc_attr( $row_filter_tag ); ?>">
+                                <td style="text-align:center;">
+                                    <span class="ifs-educore-order-badge"><?php echo intval( $sub_item->subject_order ?? 0 ); ?></span>
+                                </td>
+                                <td style="font-weight: 700; color: #00523c;"><?php echo esc_html( $class_label ); ?></td>
+                                <td>
+                                    <strong style="color: #0f172a;"><?php echo esc_html( $sub_item->subject_name ); ?></strong>
+                                    <?php if ( ! empty( $sub_item->subject_code ) ) : ?>
+                                        <span class="ifs-educore-code-tag"><?php echo esc_html( $sub_item->subject_code ); ?></span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <span class="ifs-educore-marks-badge"><?php echo floatval( $sub_item->total_marks ?? 100 ); ?></span>
+                                    <small style="color:#64748b; font-weight:700;">(Pass: <?php echo floatval( $sub_item->pass_marks ?? 33 ); ?>)</small>
+                                </td>
+                                <td>
+                                    <div class="ifs-educore-breakdown-chip">
+                                        <span>CQ: <strong><?php echo floatval( $sub_item->cq_marks ?? 0 ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->cq_pass ?? 0 ); ?>)</small></span> |
+                                        <span>MCQ: <strong><?php echo floatval( $sub_item->mcq_marks ?? 0 ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->mcq_pass ?? 0 ); ?>)</small></span>
+                                        <?php if ( floatval( $sub_item->practical_marks ?? 0 ) > 0 ) : ?>
+                                            | <span>PR: <strong><?php echo floatval( $sub_item->practical_marks ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->practical_pass ?? 0 ); ?>)</small></span>
+                                        <?php endif; ?>
+                                    </div>
+                                </td>
+                                <td style="text-align: right;">
+                                    <div style="display:inline-flex; gap:6px;">
+                                        <button type="button" 
+                                                class="ifs-educore-square-btn ifs-educore-btn-edit btn-trigger-edit" 
+                                                data-id="<?php echo esc_attr( $sub_internal_id ); ?>"
+                                                data-unit-id="<?php echo esc_attr( $sub_item->class_id ); ?>"
+                                                data-class-name="<?php echo esc_attr( $sub_item->class_name ); ?>"
+                                                data-name="<?php echo esc_attr( $sub_item->subject_name ); ?>"
+                                                data-code="<?php echo esc_attr( $sub_item->subject_code ); ?>"
+                                                data-order="<?php echo esc_attr( $sub_item->subject_order ?? 0 ); ?>"
+                                                data-total="<?php echo esc_attr( $sub_item->total_marks ?? 100 ); ?>"
+                                                data-pass="<?php echo esc_attr( $sub_item->pass_marks ?? 33 ); ?>"
+                                                data-cq="<?php echo esc_attr( $sub_item->cq_marks ?? 0 ); ?>"
+                                                data-cq-pass="<?php echo esc_attr( $sub_item->cq_pass ?? 0 ); ?>"
+                                                data-mcq="<?php echo esc_attr( $sub_item->mcq_marks ?? 0 ); ?>"
+                                                data-mcq-pass="<?php echo esc_attr( $sub_item->mcq_pass ?? 0 ); ?>"
+                                                data-practical="<?php echo esc_attr( $sub_item->practical_marks ?? 0 ); ?>"
+                                                data-practical-pass="<?php echo esc_attr( $sub_item->practical_pass ?? 0 ); ?>"
+                                                title="<?php esc_attr_e( 'Edit Subject Scheme', 'ifsedu-school-management' ); ?>">
+                                            <span class="dashicons dashicons-edit"></span>
+                                        </button>
+
+                                        <a href="<?php echo esc_url( $delete_url ); ?>" 
+                                           class="ifs-educore-square-btn ifs-educore-btn-delete" 
+                                           title="<?php esc_attr_e( 'Delete Subject', 'ifsedu-school-management' ); ?>" 
+                                           onclick="return confirm('<?php echo esc_js( __( 'Are you sure you want to remove this subject?', 'ifsedu-school-management' ) ); ?>');">
+                                            <span class="dashicons dashicons-trash"></span>
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endforeach; else : ?>
+                            <tr>
+                                <td colspan="6" style="text-align:center; padding: 30px; color: #94a3b8;">
+                                    <?php esc_html_e( 'No subjects assigned to any class yet.', 'ifsedu-school-management' ); ?>
+                                </td>
+                            </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Subject Dynamic Modal -->
+    <div class="ifs-educore-modal-backdrop" id="ifs-educore-edit-modal">
+        <div class="ifs-educore-modal-card">
+            <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f1f5f9; padding-bottom:14px; margin-bottom:16px;">
+                <h4 style="margin:0; font-size:16px; font-weight:800; color:#0f172a;"><?php esc_html_e( 'Edit Subject & Evaluation Scheme', 'ifsedu-school-management' ); ?></h4>
+                <button type="button" id="ifs-educore-close-modal" style="background:none; border:none; font-size:22px; cursor:pointer; color:#64748b;">&times;</button>
+            </div>
+
+            <form id="ifs-educore-edit-subject-form" method="POST" action="<?php echo esc_url( $base_url ); ?>">
+                <input type="hidden" id="edit_subject_id" name="subject_id" value="">
+                <input type="hidden" name="educore_update_single_subject" value="1">
+                <?php wp_nonce_field( 'ifs_educore_edit_subject_nonce', 'edit_subject_nonce_field' ); ?>
+
+                <div style="display:grid; grid-template-columns: 2fr 1fr; gap:12px; margin-bottom: 12px;">
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Target Class / Stream', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                        <div class="ifs-class-grid" id="edit_class_checkbox_container" style="max-height: 120px;">
+                            <?php foreach ( $display_units as $unit ) : ?>
+                                <label class="ifs-class-card">
+                                    <input type="checkbox" name="class_units[]" class="edit-class-cb" value="<?php echo esc_attr( $unit['key'] ); ?>" data-unit-id="<?php echo esc_attr( str_replace('id:', '', $unit['key']) ); ?>" data-class-name="<?php echo esc_attr( $unit['class_name'] ); ?>">
+                                    <span><?php echo esc_html( $unit['label'] ); ?></span>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Preset Distribution', 'ifsedu-school-management' ); ?></label>
+                        <select class="ifs-educore-field-select" id="edit_preset_selector">
+                            <option value="gen_100">General (70/30)</option>
+                            <option value="sci_100">Science (50/25/25)</option>
+                            <option value="lang_100">Language (100 CQ)</option>
+                            <option value="jun_50">Junior Tier (35/15)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: 2fr 1fr 1fr; gap:12px; margin-bottom: 12px;">
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Subject Name', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                        <input type="text" id="edit_subject_name" name="subject_name" class="ifs-educore-field-input" required>
+                    </div>
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Code', 'ifsedu-school-management' ); ?></label>
+                        <input type="text" id="edit_subject_code" name="subject_code" class="ifs-educore-field-input">
+                    </div>
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Order', 'ifsedu-school-management' ); ?></label>
+                        <input type="number" id="edit_subject_order" name="subject_order" class="ifs-educore-field-input" value="0">
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom: 12px;">
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Full Marks', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                        <input type="number" step="0.5" id="edit_total_marks" name="total_marks" class="ifs-educore-field-input" required>
+                    </div>
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Overall Pass Marks', 'ifsedu-school-management' ); ?></label>
+                        <input type="number" step="0.5" id="edit_pass_marks" name="pass_marks" class="ifs-educore-field-input">
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-bottom: 16px; background:#f8fafc; padding:12px; border-radius:10px; border:1px solid #e2e8f0;">
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'CQ (Total / Pass)', 'ifsedu-school-management' ); ?></label>
+                        <div style="display:flex; gap:4px;">
+                            <input type="number" step="0.5" id="edit_cq_marks" name="cq_marks" class="ifs-educore-field-input" placeholder="CQ">
+                            <input type="number" step="0.5" id="edit_cq_pass" name="cq_pass" class="ifs-educore-field-input" placeholder="Pass">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'MCQ (Total / Pass)', 'ifsedu-school-management' ); ?></label>
+                        <div style="display:flex; gap:4px;">
+                            <input type="number" step="0.5" id="edit_mcq_marks" name="mcq_marks" class="ifs-educore-field-input" placeholder="MCQ">
+                            <input type="number" step="0.5" id="edit_mcq_pass" name="mcq_pass" class="ifs-educore-field-input" placeholder="Pass">
+                        </div>
+                    </div>
+                    <div>
+                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Practical (Tot / Pass)', 'ifsedu-school-management' ); ?></label>
+                        <div style="display:flex; gap:4px;">
+                            <input type="number" step="0.5" id="edit_practical_marks" name="practical_marks" class="ifs-educore-field-input" placeholder="PR">
+                            <input type="number" step="0.5" id="edit_practical_pass" name="practical_pass" class="ifs-educore-field-input" placeholder="Pass">
+                        </div>
+                    </div>
+                </div>
+
+                <div style="display:flex; justify-content:flex-end; gap:10px;">
+                    <button type="button" class="ifs-educore-square-btn" style="background:#f1f5f9; color:#475569; padding:8px 16px; font-weight:700;" id="ifs-educore-cancel-edit"><?php esc_html_e( 'Cancel', 'ifsedu-school-management' ); ?></button>
+                    <button type="submit" class="ifs-educore-btn-submit" id="ifs-educore-save-edit-btn">
+                        <span class="dashicons dashicons-saved"></span> <?php esc_html_e( 'Update Scheme', 'ifsedu-school-management' ); ?>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+    <?php
+}
+
+educore_render_subjects_view();
+?>
+
+<script type="text/javascript">
+document.addEventListener('DOMContentLoaded', function() {
+    var grid = document.getElementById('classGridContainer');
+    var toggleBtn = document.getElementById('btnToggleAllClasses');
+    var searchInput = document.getElementById('classSearchInput');
+    var countBadge = document.getElementById('selectedClassCountBadge');
+    var mainForm = document.getElementById('ifs-educore-main-subject-form');
+
+    function updateSelectionState() {
+        if (!grid) return;
+        var allCheckboxes = grid.querySelectorAll('.cb-class');
+        var checkedCheckboxes = grid.querySelectorAll('.cb-class:checked');
+        var count = checkedCheckboxes.length;
+
+        if (countBadge) {
+            countBadge.textContent = count + ' Selected';
+            if (count > 0) {
+                countBadge.classList.add('has-selected');
+            } else {
+                countBadge.classList.remove('has-selected');
+            }
+        }
+
+        allCheckboxes.forEach(function(cb) {
+            var card = cb.closest('.ifs-class-card');
+            if (card) {
+                if (cb.checked) {
+                    card.classList.add('is-active');
+                } else {
+                    card.classList.remove('is-active');
+                }
+            }
+        });
+
+        if (toggleBtn) {
+            var visibleCheckboxes = grid.querySelectorAll('.ifs-class-card:not([style*="display: none"]) .cb-class');
+            var visibleChecked = grid.querySelectorAll('.ifs-class-card:not([style*="display: none"]) .cb-class:checked');
+            var allVisibleChecked = visibleCheckboxes.length > 0 && visibleCheckboxes.length === visibleChecked.length;
+            toggleBtn.textContent = allVisibleChecked ? '<?php echo esc_js( __( 'Deselect All', 'ifsedu-school-management' ) ); ?>' : '<?php echo esc_js( __( 'Select All', 'ifsedu-school-management' ) ); ?>';
+        }
+    }
+
+    if (searchInput && grid) {
+        searchInput.addEventListener('input', function() {
+            var q = this.value.toLowerCase().trim();
+            var cards = grid.querySelectorAll('.ifs-class-card');
+            cards.forEach(function(card) {
+                var text = card.getAttribute('data-class-text') || '';
+                if (!q || text.indexOf(q) !== -1) {
+                    card.style.display = 'flex';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+            updateSelectionState();
+        });
+    }
+
+    if (grid) {
+        grid.addEventListener('change', function(e) {
+            if (e.target.classList.contains('cb-class')) {
+                updateSelectionState();
+            }
+        });
+    }
+
+    if (toggleBtn && grid) {
+        toggleBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            var visibleCheckboxes = grid.querySelectorAll('.ifs-class-card:not([style*="display: none"]) .cb-class');
+            var visibleChecked = grid.querySelectorAll('.ifs-class-card:not([style*="display: none"]) .cb-class:checked');
+            var shouldCheckAll = visibleCheckboxes.length !== visibleChecked.length;
+
+            visibleCheckboxes.forEach(function(cb) {
+                cb.checked = shouldCheckAll;
+            });
+            updateSelectionState();
+        });
+    }
+
+    function applyPresetValues(totalInp, passInp, cqInp, cqPass, mcqInp, mcqPass, prInp, prPass, presetKey) {
+        if (!totalInp) return;
+        if (presetKey === 'gen_100') {
+            totalInp.value = 100; passInp.value = 33;
+            cqInp.value = 70; cqPass.value = 23;
+            mcqInp.value = 30; mcqPass.value = 10;
+            prInp.value = 0; prPass.value = 0;
+        } else if (presetKey === 'sci_100') {
+            totalInp.value = 100; passInp.value = 33;
+            cqInp.value = 50; cqPass.value = 17;
+            mcqInp.value = 25; mcqPass.value = 8;
+            prInp.value = 25; prPass.value = 8;
+        } else if (presetKey === 'lang_100') {
+            totalInp.value = 100; passInp.value = 33;
+            cqInp.value = 100; cqPass.value = 33;
+            mcqInp.value = 0; mcqPass.value = 0;
+            prInp.value = 0; prPass.value = 0;
+        } else if (presetKey === 'jun_50') {
+            totalInp.value = 50; passInp.value = 17;
+            cqInp.value = 35; cqPass.value = 12;
+            mcqInp.value = 15; mcqPass.value = 5;
+            prInp.value = 0; prPass.value = 0;
+        }
+    }
+
+    if (mainForm) {
+        mainForm.addEventListener('submit', function(e) {
+            var selectedClasses = mainForm.querySelectorAll('input[name="class_units[]"]:checked');
+            if (selectedClasses.length === 0) {
+                alert('<?php echo esc_js( __( 'Please select at least one class/stream checkbox before saving.', 'ifsedu-school-management' ) ); ?>');
+                e.preventDefault();
+            }
+        });
+    }
+
+    document.addEventListener('change', function(e) {
+        if (e.target.classList.contains('preset-selector')) {
+            var row = e.target.closest('.ifs-educore-repeater-row');
+            if (row) {
+                applyPresetValues(
+                    row.querySelector('.f-total'), row.querySelector('.f-pass'),
+                    row.querySelector('.f-cq'), row.querySelector('.f-cq-pass'),
+                    row.querySelector('.f-mcq'), row.querySelector('.f-mcq-pass'),
+                    row.querySelector('.f-pr'), row.querySelector('.f-pr-pass'),
+                    e.target.value
+                );
+            }
+        }
+        if (e.target.id === 'edit_preset_selector') {
+            applyPresetValues(
+                document.getElementById('edit_total_marks'), document.getElementById('edit_pass_marks'),
+                document.getElementById('edit_cq_marks'), document.getElementById('edit_cq_pass'),
+                document.getElementById('edit_mcq_marks'), document.getElementById('edit_mcq_pass'),
+                document.getElementById('edit_practical_marks'), document.getElementById('edit_practical_pass'),
+                e.target.value
+            );
+        }
+    });
+
+    var canvas = document.getElementById('ifs-educore-subject-repeater-canvas');
+    var addBtn = document.getElementById('ifs-educore-btn-add-subject');
+
+    function updateRemoveButtons() {
+        if (!canvas) return;
+        var rows = canvas.querySelectorAll('.ifs-educore-repeater-row');
+        rows.forEach(function(row) {
+            var btn = row.querySelector('.btn-remove-row');
+            if (rows.length > 1) {
+                btn.removeAttribute('disabled');
+            } else {
+                btn.setAttribute('disabled', 'disabled');
+            }
+        });
+    }
+
+    if (addBtn && canvas) {
+        addBtn.addEventListener('click', function() {
+            var rows = canvas.querySelectorAll('.ifs-educore-repeater-row');
+            var newRow = rows[0].cloneNode(true);
+
+            newRow.querySelectorAll('input[type="text"]').forEach(function(inp) { inp.value = ''; });
+            var orderInput = newRow.querySelector('.f-order');
+            if (orderInput) {
+                orderInput.value = rows.length + 1;
+            }
+
+            applyPresetValues(
+                newRow.querySelector('.f-total'), newRow.querySelector('.f-pass'),
+                newRow.querySelector('.f-cq'), newRow.querySelector('.f-cq-pass'),
+                newRow.querySelector('.f-mcq'), newRow.querySelector('.f-mcq-pass'),
+                newRow.querySelector('.f-pr'), newRow.querySelector('.f-pr-pass'),
+                'gen_100'
+            );
+
+            canvas.appendChild(newRow);
+            updateRemoveButtons();
+        });
+
+        canvas.addEventListener('click', function(e) {
+            var btn = e.target.closest('.btn-remove-row');
+            if (btn && !btn.hasAttribute('disabled')) {
+                var row = btn.closest('.ifs-educore-repeater-row');
+                if (row) {
+                    row.remove();
+                    updateRemoveButtons();
+                }
+            }
+        });
+    }
+
+    // --------------------------------------------------------------------------
+    // Real-Time Table Filter
+    // --------------------------------------------------------------------------
+    var filterSelect = document.getElementById('ifs-educore-class-filter');
+    var tableBody = document.querySelector('#ifs-educore-subjects-table tbody');
+    var countPill = document.getElementById('ifs-educore-subject-count-pill');
+
+    if (filterSelect && tableBody) {
+        filterSelect.addEventListener('change', function() {
+            var selectedFilter = this.value.toLowerCase().trim();
+            var rows = tableBody.querySelectorAll('tr[data-filter-tag]');
+            var visibleCount = 0;
+
+            rows.forEach(function(row) {
+                var rowTag = (row.getAttribute('data-filter-tag') || '').toLowerCase().trim();
+                var rowClassName = (row.getAttribute('data-class-name') || '').toLowerCase().trim();
+                
+                if (selectedFilter === 'all' || rowTag === selectedFilter || rowClassName === selectedFilter) {
+                    row.style.display = '';
+                    visibleCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+
+            if (countPill) {
+                countPill.textContent = visibleCount + ' <?php echo esc_js( __( 'Subjects', 'ifsedu-school-management' ) ); ?>';
+            }
+        });
+    }
+
+    var modal = document.getElementById('ifs-educore-edit-modal');
+    var closeModalBtn = document.getElementById('ifs-educore-close-modal');
+    var cancelModalBtn = document.getElementById('ifs-educore-cancel-edit');
+    var editForm = document.getElementById('ifs-educore-edit-subject-form');
+
+    function hideModal() {
+        if (modal) modal.classList.remove('is-visible');
+    }
+
+    if (closeModalBtn) closeModalBtn.addEventListener('click', hideModal);
+    if (cancelModalBtn) cancelModalBtn.addEventListener('click', hideModal);
+
+    document.addEventListener('click', function(e) {
+        var editBtn = e.target.closest('.btn-trigger-edit');
+        if (editBtn) {
+            var targetUnitId = editBtn.getAttribute('data-unit-id');
+            var targetClassName = editBtn.getAttribute('data-class-name');
+
+            document.getElementById('edit_subject_id').value         = editBtn.getAttribute('data-id');
+            document.getElementById('edit_subject_name').value       = editBtn.getAttribute('data-name');
+            document.getElementById('edit_subject_code').value       = editBtn.getAttribute('data-code');
+            document.getElementById('edit_subject_order').value      = editBtn.getAttribute('data-order') || 0;
+            document.getElementById('edit_total_marks').value        = editBtn.getAttribute('data-total');
+            document.getElementById('edit_pass_marks').value         = editBtn.getAttribute('data-pass');
+            document.getElementById('edit_cq_marks').value           = editBtn.getAttribute('data-cq');
+            document.getElementById('edit_cq_pass').value            = editBtn.getAttribute('data-cq-pass');
+            document.getElementById('edit_mcq_marks').value          = editBtn.getAttribute('data-mcq');
+            document.getElementById('edit_mcq_pass').value           = editBtn.getAttribute('data-mcq-pass');
+            document.getElementById('edit_practical_marks').value    = editBtn.getAttribute('data-practical');
+            document.getElementById('edit_practical_pass').value     = editBtn.getAttribute('data-practical-pass');
+
+            document.querySelectorAll('#edit_class_checkbox_container .edit-class-cb').forEach(function(cb) {
+                var cbUnitId = cb.getAttribute('data-unit-id');
+                var cbClassName = cb.getAttribute('data-class-name');
+
+                if (cbUnitId === targetUnitId || cbClassName === targetClassName) {
+                    cb.checked = true;
+                } else {
+                    cb.checked = false;
+                }
+            });
+
+            modal.classList.add('is-visible');
+        }
+    });
+
+    if (editForm) {
+        editForm.addEventListener('submit', function(e) {
+            var selectedEditClasses = editForm.querySelectorAll('input[name="class_units[]"]:checked');
+            if (selectedEditClasses.length === 0) {
+                alert('<?php echo esc_js( __( 'Please select at least one class checkbox.', 'ifsedu-school-management' ) ); ?>');
+                e.preventDefault();
+            }
+        });
+    }
+
+    updateSelectionState();
+});
+</script>
