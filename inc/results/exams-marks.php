@@ -12,10 +12,10 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // --------------------------------------------------------------------------
-// 1. AJAX HANDLERS (Filtered by Teacher Assignments)
+// 1. AJAX HANDLERS (Filtered by Exam & Teacher Assignments)
 // --------------------------------------------------------------------------
-add_action( 'wp_ajax_ifs_educore_get_sections_by_class_marks', 'ifs_educore_get_sections_by_class_marks_handler' );
-function ifs_educore_get_sections_by_class_marks_handler() {
+add_action( 'wp_ajax_ifs_educore_get_classes_by_exam_marks', 'ifs_educore_get_classes_by_exam_marks_handler' );
+function ifs_educore_get_classes_by_exam_marks_handler() {
     check_ajax_referer( 'ifs_educore_marks_nonce', 'security' );
 
     $current_user = wp_get_current_user();
@@ -27,9 +27,12 @@ function ifs_educore_get_sections_by_class_marks_handler() {
     }
 
     global $wpdb;
-    $table_staff = $wpdb->prefix . 'sms_staff';
+    $table_staff            = $wpdb->prefix . 'sms_staff';
+    $table_exams            = $wpdb->prefix . 'sms_exams';
+    $table_units            = $wpdb->prefix . 'sms_academic_units';
+    $table_teacher_subjects = $wpdb->prefix . 'sms_teacher_subjects';
 
-    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     if ( ! $is_admin && ! $is_staff ) {
         $staff_exists = (int) $wpdb->get_var(
             $wpdb->prepare(
@@ -47,9 +50,86 @@ function ifs_educore_get_sections_by_class_marks_handler() {
         wp_send_json_error( array( 'message' => esc_html__( 'Permission denied.', 'ifsedu-school-management' ) ) );
     }
 
-    $table_units              = $wpdb->prefix . 'sms_academic_units';
+    $exam_id = isset( $_POST['exam_id'] ) ? absint( $_POST['exam_id'] ) : 0;
+    if ( $exam_id <= 0 ) {
+        wp_send_json_success( array() );
+    }
+
+    $raw_exam_classes = $wpdb->get_var( $wpdb->prepare( "SELECT class_name FROM `{$table_exams}` WHERE id = %d LIMIT 1", $exam_id ) );
+    if ( empty( $raw_exam_classes ) ) {
+        wp_send_json_success( array() );
+    }
+
+    $exam_classes = array_map( 'trim', explode( ',', (string) $raw_exam_classes ) );
+
+    // If teacher, intersect with teacher's assigned classes
+    if ( ! $is_admin ) {
+        $teacher_id = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM `{$table_staff}` WHERE wp_user_id = %d OR email = %s OR full_name = %s LIMIT 1",
+                $current_user->ID,
+                $current_user->user_email,
+                $current_user->display_name
+            )
+        );
+
+        if ( $teacher_id > 0 ) {
+            $teacher_classes = $wpdb->get_col(
+                $wpdb->prepare(
+                    "SELECT DISTINCT u.class_name 
+                     FROM `{$table_teacher_subjects}` ts
+                     INNER JOIN `{$table_units}` u ON ts.class_id = u.id 
+                     WHERE ts.teacher_id = %d",
+                    $teacher_id
+                )
+            );
+            $exam_classes = array_intersect( $exam_classes, array_map( 'trim', (array) $teacher_classes ) );
+        }
+    }
+
+    $exam_classes = array_values( array_unique( array_filter( $exam_classes ) ) );
+    natcasesort( $exam_classes );
+    // phpcs:enable
+
+    wp_send_json_success( array_values( $exam_classes ) );
+}
+
+add_action( 'wp_ajax_ifs_educore_get_sections_by_class_marks', 'ifs_educore_get_sections_by_class_marks_handler' );
+function ifs_educore_get_sections_by_class_marks_handler() {
+    check_ajax_referer( 'ifs_educore_marks_nonce', 'security' );
+
+    $current_user = wp_get_current_user();
+    $is_admin     = current_user_can( 'manage_options' ) || in_array( 'administrator', (array) $current_user->roles, true );
+    $is_staff     = false;
+
+    if ( function_exists( 'educore_has_access' ) ) {
+        $is_staff = educore_has_access( array( 'teacher', 'staff', 'operator', 'instructor', 'editor', 'author' ) );
+    }
+
+    global $wpdb;
+    $table_staff = $wpdb->prefix . 'sms_staff';
+
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+    if ( ! $is_admin && ! $is_staff ) {
+        $staff_exists = (int) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM `{$table_staff}` WHERE wp_user_id = %d OR email = %s LIMIT 1",
+                $current_user->ID,
+                $current_user->user_email
+            )
+        );
+        if ( $staff_exists > 0 ) {
+            $is_staff = true;
+        }
+    }
+
+    if ( ! $is_admin && ! $is_staff ) {
+        wp_send_json_error( array( 'message' => esc_html__( 'Permission denied.', 'ifsedu-school-management' ) ) );
+    }
+
+    $table_units            = $wpdb->prefix . 'sms_academic_units';
     $table_teacher_subjects = $wpdb->prefix . 'sms_teacher_subjects';
-    $class_name               = isset( $_POST['class_name'] ) ? sanitize_text_field( wp_unslash( $_POST['class_name'] ) ) : '';
+    $class_name             = isset( $_POST['class_name'] ) ? sanitize_text_field( wp_unslash( $_POST['class_name'] ) ) : '';
 
     if ( empty( $class_name ) ) {
         wp_send_json_success( array() );
@@ -77,12 +157,10 @@ function ifs_educore_get_sections_by_class_marks_handler() {
                     $class_name
                 )
             );
-            // phpcs:enable
             wp_send_json_success( is_array( $sections ) ? $sections : array() );
         }
     }
 
-    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $sections = $wpdb->get_col(
         $wpdb->prepare(
             "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY section_name ASC",
@@ -109,7 +187,7 @@ function ifs_educore_get_subjects_for_marks_matrix_handler() {
     global $wpdb;
     $table_staff = $wpdb->prefix . 'sms_staff';
 
-    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     if ( ! $is_admin && ! $is_staff ) {
         $staff_exists = (int) $wpdb->get_var(
             $wpdb->prepare(
@@ -159,12 +237,10 @@ function ifs_educore_get_subjects_for_marks_matrix_handler() {
                     $class_name
                 )
             );
-            // phpcs:enable
             wp_send_json_success( is_array( $subjects ) ? $subjects : array() );
         }
     }
 
-    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $subjects = $wpdb->get_results(
         $wpdb->prepare(
             "SELECT DISTINCT s.id, s.subject_name, s.subject_code, s.total_marks, s.pass_marks, s.cq_marks, s.cq_pass, s.mcq_marks, s.mcq_pass, s.practical_marks, s.practical_pass 
@@ -221,7 +297,6 @@ function educore_exams_marks_view() {
     $table_staff            = $wpdb->prefix . 'sms_staff';
     $table_teacher_subjects = $wpdb->prefix . 'sms_teacher_subjects';
 
-    // 1. Procedural Capability Validation
     $is_admin = current_user_can( 'manage_options' ) || in_array( 'administrator', (array) $current_user->roles, true );
     $is_staff = false;
 
@@ -229,7 +304,7 @@ function educore_exams_marks_view() {
         $is_staff = educore_has_access( array( 'teacher', 'staff', 'operator', 'instructor', 'editor', 'author' ) );
     }
 
-    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     if ( ! $is_staff && ! $is_admin ) {
         $staff_exists = (int) $wpdb->get_var(
             $wpdb->prepare(
@@ -242,7 +317,6 @@ function educore_exams_marks_view() {
             $is_staff = true;
         }
     }
-    // phpcs:enable
 
     if ( ! $is_admin && ! $is_staff ) {
         wp_die( esc_html__( 'You do not have sufficient permissions to enter examination marks.', 'ifsedu-school-management' ) );
@@ -254,21 +328,16 @@ function educore_exams_marks_view() {
     $notice_msg  = '';
 
     // Unified Parameter Resolution
-    // phpcs:disable WordPress.Security.NonceVerification.Recommended
     $filter_exam    = isset( $_REQUEST['exam_id'] ) ? absint( $_REQUEST['exam_id'] ) : 0;
     $filter_class   = isset( $_REQUEST['class_name'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['class_name'] ) ) : '';
     $filter_section = isset( $_REQUEST['section_name'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['section_name'] ) ) : '';
     $filter_subject = isset( $_REQUEST['subject_name'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['subject_name'] ) ) : '';
-    // phpcs:enable WordPress.Security.NonceVerification.Recommended
 
-    // --------------------------------------------------------------------------
-    // RESOLVE TEACHER SUBJECT & CLASS ALLOCATIONS
-    // --------------------------------------------------------------------------
+    // Resolve Teacher Allocations
     $teacher_assigned_classes = array();
     $teacher_assigned_subs    = array();
     $teacher_id               = 0;
 
-    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     if ( ! $is_admin ) {
         $teacher_id = (int) $wpdb->get_var(
             $wpdb->prepare(
@@ -305,16 +374,12 @@ function educore_exams_marks_view() {
             }
         }
     }
-    // phpcs:enable
 
-    // --------------------------------------------------------------------------
-    // FORM SUBMISSION (SAVE/UPDATE BULK MARKS MATRIX)
-    // --------------------------------------------------------------------------
+    // Handle Form Submission (Save / Update Bulk Marks Matrix)
     $request_method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
     if ( 'POST' === $request_method && isset( $_POST['educore_save_marks_matrix'] ) ) {
         if ( isset( $_POST['ifs_educore_marks_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ifs_educore_marks_nonce'] ) ), 'save_marks_action' ) ) {
             
-            // Authorization Check for Teachers
             if ( ! $is_admin && ! empty( $teacher_assigned_classes ) && ( ! in_array( $filter_class, $teacher_assigned_classes, true ) || ! in_array( $filter_subject, (array) ( $teacher_assigned_subs[ $filter_class ] ?? array() ), true ) ) ) {
                 wp_die( esc_html__( 'Security Check: You are not authorized to submit marks for this class/subject allocation.', 'ifsedu-school-management' ) );
             }
@@ -376,7 +441,6 @@ function educore_exams_marks_view() {
                         $gpa        = $grade_eval[1];
                     }
 
-                    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
                     $existing_id = (int) $wpdb->get_var(
                         $wpdb->prepare(
                             "SELECT id FROM `{$table_results}` WHERE exam_id = %d AND student_id = %d AND subject_name = %s LIMIT 1",
@@ -408,17 +472,14 @@ function educore_exams_marks_view() {
                     } else {
                         $wpdb->insert( $table_results, $data, $format );
                     }
-                    // phpcs:enable
                     $saved_count++;
                 }
 
                 if ( function_exists( 'educore_log_activity' ) ) {
-                    /* translators: 1: Number of students, 2: Subject name */
                     educore_log_activity( sprintf( __( 'Evaluated and saved marks for %1$d students in %2$s', 'ifsedu-school-management' ), $saved_count, $filter_subject ) );
                 }
 
                 $notice_msg = sprintf(
-                    /* translators: %d: Number of students whose marks were saved */
                     esc_html__( 'Successfully evaluated and saved marks for %d students.', 'ifsedu-school-management' ),
                     $saved_count
                 );
@@ -427,18 +488,21 @@ function educore_exams_marks_view() {
     }
 
     // Fetch Examinations
-    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $exams = $wpdb->get_results( "SELECT id, exam_name, class_name FROM `{$table_exams}` ORDER BY id DESC" );
 
-    // Fetch Academic Classes
+    // Fetch Classes ONLY assigned to the active selected Exam
     $academic_classes = array();
-    if ( ! $is_admin && ! empty( $teacher_assigned_classes ) ) {
-        $academic_classes = $teacher_assigned_classes;
-    } else {
-        $raw_classes = $wpdb->get_col( "SELECT DISTINCT class_name FROM `{$table_units}` WHERE class_name != '' ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC" );
-        if ( ! empty( $raw_classes ) && is_array( $raw_classes ) ) {
-            $academic_classes = array_values( array_unique( $raw_classes ) );
-            usort( $academic_classes, 'strnatcasecmp' );
+    if ( $filter_exam > 0 ) {
+        $exam_row = $wpdb->get_row( $wpdb->prepare( "SELECT class_name FROM `{$table_exams}` WHERE id = %d LIMIT 1", $filter_exam ) );
+        if ( ! empty( $exam_row ) && ! empty( $exam_row->class_name ) ) {
+            $parsed_classes = array_map( 'trim', explode( ',', (string) $exam_row->class_name ) );
+            if ( ! $is_admin && ! empty( $teacher_assigned_classes ) ) {
+                $academic_classes = array_intersect( $parsed_classes, $teacher_assigned_classes );
+            } else {
+                $academic_classes = $parsed_classes;
+            }
+            $academic_classes = array_values( array_unique( array_filter( $academic_classes ) ) );
+            natcasesort( $academic_classes );
         }
     }
 
@@ -554,18 +618,119 @@ function educore_exams_marks_view() {
     // phpcs:enable
     ?>
 
+    <style>
+        .ifs-educore-marks-root {
+            max-width: 100%;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+        .ifs-educore-bento-filter-card {
+            background: #ffffff !important;
+            border: 1px solid #e2e8f0 !important;
+            border-radius: 14px !important;
+            padding: 20px 24px !important;
+            margin-bottom: 20px !important;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.02) !important;
+            box-sizing: border-box !important;
+        }
+        .ifs-educore-filter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)) 130px;
+            gap: 16px;
+            align-items: end;
+        }
+        @media (max-width: 900px) {
+            .ifs-educore-filter-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+        .ifs-educore-form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .ifs-educore-form-label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 8px;
+        }
+        .ifs-educore-select {
+            width: 100% !important;
+            height: 42px !important;
+            padding: 0 34px 0 14px !important;
+            border: 1.5px solid #cbd5e1 !important;
+            border-radius: 9px !important;
+            font-size: 13.5px !important;
+            font-weight: 600 !important;
+            color: #0f172a !important;
+            background-color: #ffffff !important;
+            background-image: url('data:image/svg+xml;utf8,<svg fill="%2364748b" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>') !important;
+            background-repeat: no-repeat !important;
+            background-position: right 10px center !important;
+            box-sizing: border-box !important;
+            outline: none !important;
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            -moz-appearance: none !important;
+            transition: all 0.2s ease !important;
+            cursor: pointer;
+        }
+        .ifs-educore-select:hover:not(:disabled) {
+            border-color: #94a3b8 !important;
+        }
+        .ifs-educore-select:focus {
+            border-color: #00523c !important;
+            box-shadow: 0 0 0 3px rgba(0, 82, 60, 0.12) !important;
+            background-image: url('data:image/svg+xml;utf8,<svg fill="%2300523c" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>') !important;
+        }
+        .ifs-educore-select:disabled {
+            background-color: #f8fafc !important;
+            color: #94a3b8 !important;
+            border-color: #e2e8f0 !important;
+            cursor: not-allowed;
+            opacity: 0.85;
+            background-image: url('data:image/svg+xml;utf8,<svg fill="%23cbd5e1" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>') !important;
+        }
+        .ifs-educore-btn-load {
+            width: 100% !important;
+            height: 42px !important;
+            background: #00523c !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+            font-size: 13.5px !important;
+            border: none !important;
+            border-radius: 9px !important;
+            cursor: pointer !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            gap: 6px !important;
+            box-shadow: 0 4px 12px rgba(0, 82, 60, 0.18) !important;
+            transition: all 0.2s ease !important;
+        }
+        .ifs-educore-btn-load:hover {
+            background: #047857 !important;
+        }
+    </style>
+
     <div class="ifs-educore-marks-root">
 
         <?php if ( ! empty( $notice_msg ) ) : ?>
-            <div class="notice notice-success is-dismissible" style="padding:12px; margin:0; font-weight:700; border-left:4px solid #00523c; background:#ecfdf5; color:#065f46; border-radius:8px;">
+            <div class="notice notice-success is-dismissible" style="padding:12px; margin:0 0 16px 0; font-weight:700; border-left:4px solid #00523c; background:#ecfdf5; color:#065f46; border-radius:8px;">
                 <span class="dashicons dashicons-yes-alt" style="vertical-align:middle; margin-right:4px;"></span>
                 <?php echo esc_html( $notice_msg ); ?>
             </div>
         <?php endif; ?>
 
         <!-- Search & Selection Bento Filter Card -->
-        <div class="ifs-educore-bento-card">
-
+        <div class="ifs-educore-bento-filter-card">
             <form method="GET" action="<?php echo esc_url( $base_url ); ?>" id="educoreMarksFilterForm">
                 <?php 
                 $parsed_url = wp_parse_url( $base_url );
@@ -583,7 +748,10 @@ function educore_exams_marks_view() {
                 <div class="ifs-educore-filter-grid">
                     <!-- 1. Select Exam -->
                     <div class="ifs-educore-form-group">
-                        <label class="ifs-educore-form-label"><?php esc_html_e( '1. Select Exam', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
+                        <label class="ifs-educore-form-label">
+                            <span class="dashicons dashicons-calendar-alt" style="font-size:14px; width:14px; height:14px; color:#00523c;"></span>
+                            <?php esc_html_e( '1. Select Exam', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span>
+                        </label>
                         <select name="exam_id" id="ifs_educore_marks_exam_select" class="ifs-educore-select" required>
                             <option value=""><?php esc_html_e( '-- Choose Exam --', 'ifsedu-school-management' ); ?></option>
                             <?php foreach ( $exams as $ex ) : ?>
@@ -594,16 +762,17 @@ function educore_exams_marks_view() {
                         </select>
                     </div>
 
-                    <!-- 2. Class Selection -->
+                    <!-- 2. Exam Class Selection -->
                     <div class="ifs-educore-form-group">
-                        <label class="ifs-educore-form-label"><?php esc_html_e( '2. Class Name', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
-                        <select name="class_name" id="ifs_educore_marks_class_select" class="ifs-educore-select" required>
+                        <label class="ifs-educore-form-label">
+                            <span class="dashicons dashicons-welcome-learn-more" style="font-size:14px; width:14px; height:14px; color:#00523c;"></span>
+                            <?php esc_html_e( '2. Exam Class', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span>
+                        </label>
+                        <select name="class_name" id="ifs_educore_marks_class_select" class="ifs-educore-select" required <?php disabled( empty( $academic_classes ) && empty( $filter_exam ) ); ?>>
                             <option value=""><?php esc_html_e( '-- Choose Class --', 'ifsedu-school-management' ); ?></option>
-                            <?php foreach ( $academic_classes as $cls_name ) : 
-                                $display_class_name = preg_match( '/^class\s+/i', (string) $cls_name ) ? $cls_name : 'Class ' . $cls_name;
-                            ?>
+                            <?php foreach ( $academic_classes as $cls_name ) : ?>
                                 <option value="<?php echo esc_attr( $cls_name ); ?>" <?php selected( $filter_class, $cls_name ); ?>>
-                                    <?php echo esc_html( $display_class_name ); ?>
+                                    <?php echo esc_html( $cls_name ); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -611,7 +780,10 @@ function educore_exams_marks_view() {
 
                     <!-- 3. Section Selection -->
                     <div class="ifs-educore-form-group">
-                        <label class="ifs-educore-form-label"><?php esc_html_e( '3. Section (Optional)', 'ifsedu-school-management' ); ?></label>
+                        <label class="ifs-educore-form-label">
+                            <span class="dashicons dashicons-groups" style="font-size:14px; width:14px; height:14px; color:#00523c;"></span>
+                            <?php esc_html_e( '3. Section / Stream', 'ifsedu-school-management' ); ?>
+                        </label>
                         <select name="section_name" id="ifs_educore_marks_section_select" class="ifs-educore-select">
                             <option value=""><?php esc_html_e( '-- All Sections --', 'ifsedu-school-management' ); ?></option>
                             <?php foreach ( $available_sections as $sec_name ) : ?>
@@ -624,7 +796,10 @@ function educore_exams_marks_view() {
 
                     <!-- 4. Subject Selection -->
                     <div class="ifs-educore-form-group">
-                        <label class="ifs-educore-form-label"><?php esc_html_e( '4. Target Subject', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
+                        <label class="ifs-educore-form-label">
+                            <span class="dashicons dashicons-book" style="font-size:14px; width:14px; height:14px; color:#00523c;"></span>
+                            <?php esc_html_e( '4. Subject', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span>
+                        </label>
                         <select name="subject_name" id="ifs_educore_marks_subject_select" class="ifs-educore-select" required>
                             <option value=""><?php esc_html_e( '-- Choose Subject --', 'ifsedu-school-management' ); ?></option>
                             <?php foreach ( $available_subjects as $sub_item ) : ?>
@@ -637,9 +812,9 @@ function educore_exams_marks_view() {
 
                     <!-- 5. Submit Filter -->
                     <div>
-                        <button type="submit" class="ifs-educore-btn-primary">
-                            <span class="dashicons dashicons-filter"></span>
-                            <?php esc_html_e( 'Load Matrix', 'ifsedu-school-management' ); ?>
+                        <button type="submit" class="ifs-educore-btn-load">
+                            <span class="dashicons dashicons-filter" style="font-size:15px; width:15px; height:15px;"></span>
+                            <?php esc_html_e( 'Load', 'ifsedu-school-management' ); ?>
                         </button>
                     </div>
                 </div>
@@ -651,6 +826,45 @@ function educore_exams_marks_view() {
         jQuery(document).ready(function($) {
             var nonce = '<?php echo esc_js( wp_create_nonce( "ifs_educore_marks_nonce" ) ); ?>';
 
+            // When Exam is changed -> Load only classes assigned to that Exam
+            $('#ifs_educore_marks_exam_select').on('change', function() {
+                var selectedExamId = $(this).val();
+                var $classSelect   = $('#ifs_educore_marks_class_select');
+                var $secSelect     = $('#ifs_educore_marks_section_select');
+                var $subjectSelect = $('#ifs_educore_marks_subject_select');
+
+                $classSelect.html('<option value=""><?php echo esc_js( __( '-- Loading Classes... --', 'ifsedu-school-management' ) ); ?></option>').prop('disabled', true);
+                $secSelect.html('<option value=""><?php echo esc_js( __( '-- All Sections --', 'ifsedu-school-management' ) ); ?></option>');
+                $subjectSelect.html('<option value=""><?php echo esc_js( __( '-- Choose Subject --', 'ifsedu-school-management' ) ); ?></option>');
+
+                if (!selectedExamId) {
+                    $classSelect.html('<option value=""><?php echo esc_js( __( '-- Choose Class --', 'ifsedu-school-management' ) ); ?></option>');
+                    return;
+                }
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'ifs_educore_get_classes_by_exam_marks',
+                        security: nonce,
+                        exam_id: selectedExamId
+                    },
+                    success: function(response) {
+                        if (response.success && response.data.length > 0) {
+                            var options = '<option value=""><?php echo esc_js( __( '-- Choose Class --', 'ifsedu-school-management' ) ); ?></option>';
+                            $.each(response.data, function(i, cls) {
+                                options += '<option value="' + cls + '">' + cls + '</option>';
+                            });
+                            $classSelect.html(options).prop('disabled', false);
+                        } else {
+                            $classSelect.html('<option value=""><?php echo esc_js( __( 'No Classes Assigned To Exam', 'ifsedu-school-management' ) ); ?></option>').prop('disabled', true);
+                        }
+                    }
+                });
+            });
+
+            // When Class is changed -> Load corresponding sections & subjects
             $('#ifs_educore_marks_class_select').on('change', function() {
                 var selectedClass  = $(this).val();
                 var $secSelect     = $('#ifs_educore_marks_section_select');
@@ -724,7 +938,7 @@ function educore_exams_marks_view() {
             $pr_lim    = $active_subject_obj ? floatval( $active_subject_obj->practical_marks ) : 0.00;
             $pr_p_lim  = $active_subject_obj ? floatval( $active_subject_obj->practical_pass ) : 0.00;
         ?>
-            <div class="ifs-educore-bento-card">
+            <div class="ifs-educore-bento-card" style="background:#ffffff; border:1px solid #e2e8f0; border-radius:14px; padding:24px; box-shadow:0 4px 15px rgba(0,0,0,0.02);">
                 <form method="POST" id="educoreMarksMatrixForm" action="<?php echo esc_url( add_query_arg( array( 'exam_id' => $filter_exam, 'class_name' => $filter_class, 'section_name' => $filter_section, 'subject_name' => $filter_subject, 'sub' => 'marks' ), $base_url ) ); ?>">
                     <?php wp_nonce_field( 'save_marks_action', 'ifs_educore_marks_nonce' ); ?>
                     <input type="hidden" name="exam_id" value="<?php echo esc_attr( $filter_exam ); ?>">
@@ -742,13 +956,13 @@ function educore_exams_marks_view() {
                     <input type="hidden" name="mcq_pass_limit" id="mcq_pass_limit" value="<?php echo esc_attr( $mcq_p_lim ); ?>">
                     <input type="hidden" name="pr_pass_limit" id="pr_pass_limit" value="<?php echo esc_attr( $pr_p_lim ); ?>">
 
-                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:20px; padding-bottom:14px; border-bottom:1px solid #e2e8f0;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; margin-bottom:18px; padding-bottom:14px; border-bottom:1px solid #e2e8f0;">
                         <div>
                             <strong style="font-size:16px; color:#0f172a;"><?php echo esc_html( $filter_subject ); ?></strong>
                             <span style="font-size:12px; color:#64748b; margin-left:8px;">(Total: <?php echo esc_html( $tot_limit ); ?> | Pass: <?php echo esc_html( $pass_lim ); ?>)</span>
                         </div>
                         <div>
-                            <button type="submit" name="educore_save_marks_matrix" class="ifs-educore-btn-submit">
+                            <button type="submit" name="educore_save_marks_matrix" class="ifs-educore-btn-submit" style="background:#00523c; color:#fff; border:none; padding:9px 20px; border-radius:8px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
                                 <span class="dashicons dashicons-saved"></span>
                                 <?php esc_html_e( 'Save All Marks', 'ifsedu-school-management' ); ?>
                             </button>
@@ -756,34 +970,34 @@ function educore_exams_marks_view() {
                     </div>
 
                     <div style="overflow-x:auto;">
-                        <table class="ifs-educore-matrix-table" id="dptMarksEntryTable">
+                        <table class="ifs-educore-matrix-table" id="dptMarksEntryTable" style="width:100%; border-collapse:collapse; font-size:13px;">
                             <thead>
-                                <tr>
-                                    <th style="width: 6%;"><?php esc_html_e( 'Roll', 'ifsedu-school-management' ); ?></th>
-                                    <th style="width: 12%;"><?php esc_html_e( 'Student ID', 'ifsedu-school-management' ); ?></th>
-                                    <th style="text-align: left; width: 22%;"><?php esc_html_e( 'Student Full Name', 'ifsedu-school-management' ); ?></th>
+                                <tr style="background:#f8fafc; text-align:center; border-bottom:2px solid #e2e8f0;">
+                                    <th style="padding:10px; width: 6%;"><?php esc_html_e( 'Roll', 'ifsedu-school-management' ); ?></th>
+                                    <th style="padding:10px; width: 12%;"><?php esc_html_e( 'Student ID', 'ifsedu-school-management' ); ?></th>
+                                    <th style="padding:10px; text-align: left; width: 22%;"><?php esc_html_e( 'Student Name', 'ifsedu-school-management' ); ?></th>
                                     
                                     <!-- MCQ Column -->
-                                    <th style="width: 14%;">
+                                    <th style="padding:10px; width: 14%;">
                                         <?php esc_html_e( 'MCQ', 'ifsedu-school-management' ); ?><br>
-                                        <span class="ifs-educore-criteria-pill">Max: <?php echo esc_html( $mcq_lim ); ?> | &ge; <?php echo esc_html( $mcq_p_lim ); ?></span>
+                                        <span style="font-size:10px; color:#64748b; font-weight:600;">Max: <?php echo esc_html( $mcq_lim ); ?> | &ge; <?php echo esc_html( $mcq_p_lim ); ?></span>
                                     </th>
 
                                     <!-- CQ Column -->
-                                    <th style="width: 14%;">
+                                    <th style="padding:10px; width: 14%;">
                                         <?php esc_html_e( 'CQ Theory', 'ifsedu-school-management' ); ?><br>
-                                        <span class="ifs-educore-criteria-pill">Max: <?php echo esc_html( $cq_lim ); ?> | &ge; <?php echo esc_html( $cq_p_lim ); ?></span>
+                                        <span style="font-size:10px; color:#64748b; font-weight:600;">Max: <?php echo esc_html( $cq_lim ); ?> | &ge; <?php echo esc_html( $cq_p_lim ); ?></span>
                                     </th>
 
                                     <?php if ( $pr_lim > 0 ) : ?>
-                                        <th style="width: 14%;">
+                                        <th style="padding:10px; width: 14%;">
                                             <?php esc_html_e( 'Practical', 'ifsedu-school-management' ); ?><br>
-                                            <span class="ifs-educore-criteria-pill">Max: <?php echo esc_html( $pr_lim ); ?> | &ge; <?php echo esc_html( $pr_p_lim ); ?></span>
+                                            <span style="font-size:10px; color:#64748b; font-weight:600;">Max: <?php echo esc_html( $pr_lim ); ?> | &ge; <?php echo esc_html( $pr_p_lim ); ?></span>
                                         </th>
                                     <?php endif; ?>
-                                    <th style="width: 10%;"><?php esc_html_e( 'Total', 'ifsedu-school-management' ); ?></th>
-                                    <th style="width: 8%;"><?php esc_html_e( 'Grade', 'ifsedu-school-management' ); ?></th>
-                                    <th style="width: 8%;"><?php esc_html_e( 'GPA', 'ifsedu-school-management' ); ?></th>
+                                    <th style="padding:10px; width: 10%;"><?php esc_html_e( 'Total', 'ifsedu-school-management' ); ?></th>
+                                    <th style="padding:10px; width: 8%;"><?php esc_html_e( 'Grade', 'ifsedu-school-management' ); ?></th>
+                                    <th style="padding:10px; width: 8%;"><?php esc_html_e( 'GPA', 'ifsedu-school-management' ); ?></th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -798,58 +1012,58 @@ function educore_exams_marks_view() {
                                     $curr_gpa = $curr_res ? number_format( floatval( $curr_res->gpa ), 2 ) : '0.00';
                                     $is_fail  = ( 'F' === $curr_grd );
                                 ?>
-                                    <tr data-student-id="<?php echo esc_attr( $student_internal_id ); ?>">
-                                        <td><strong>#<?php echo esc_html( $s->roll_no ); ?></strong></td>
-                                        <td><code><?php echo esc_html( strtoupper( (string) $s->student_id ) ); ?></code></td>
-                                        <td style="text-align: left; font-weight: 700; color: #0f172a;"><?php echo esc_html( $s->full_name ); ?></td>
+                                    <tr data-student-id="<?php echo esc_attr( $student_internal_id ); ?>" style="border-bottom:1px solid #f1f5f9; text-align:center;">
+                                        <td style="padding:10px;"><strong>#<?php echo esc_html( $s->roll_no ); ?></strong></td>
+                                        <td style="padding:10px;"><code><?php echo esc_html( strtoupper( (string) $s->student_id ) ); ?></code></td>
+                                        <td style="padding:10px; text-align: left; font-weight: 700; color: #0f172a;"><?php echo esc_html( $s->full_name ); ?></td>
                                         
                                         <!-- MCQ Input -->
-                                        <td>
+                                        <td style="padding:10px;">
                                             <input type="number" step="0.5" min="0" max="<?php echo esc_attr( $mcq_lim ); ?>" 
                                                    name="mcq_marks[<?php echo esc_attr( $student_internal_id ); ?>]" 
                                                    class="ifs-educore-mark-cell-input inp-mcq" 
                                                    data-max="<?php echo esc_attr( $mcq_lim ); ?>" 
-                                                   value="<?php echo esc_attr( $curr_mcq ); ?>" placeholder="0">
+                                                   value="<?php echo esc_attr( $curr_mcq ); ?>" placeholder="0" style="width:75px; height:34px; text-align:center; border:1px solid #cbd5e1; border-radius:6px;">
                                         </td>
 
                                         <!-- CQ Input -->
-                                        <td>
+                                        <td style="padding:10px;">
                                             <input type="number" step="0.5" min="0" max="<?php echo esc_attr( $cq_lim ); ?>" 
                                                    name="cq_marks[<?php echo esc_attr( $student_internal_id ); ?>]" 
                                                    class="ifs-educore-mark-cell-input inp-cq" 
                                                    data-max="<?php echo esc_attr( $cq_lim ); ?>" 
-                                                   value="<?php echo esc_attr( $curr_cq ); ?>" placeholder="0">
+                                                   value="<?php echo esc_attr( $curr_cq ); ?>" placeholder="0" style="width:75px; height:34px; text-align:center; border:1px solid #cbd5e1; border-radius:6px;">
                                         </td>
 
                                         <!-- Practical Input -->
                                         <?php if ( $pr_lim > 0 ) : ?>
-                                            <td>
+                                            <td style="padding:10px;">
                                                 <input type="number" step="0.5" min="0" max="<?php echo esc_attr( $pr_lim ); ?>" 
                                                        name="practical_marks[<?php echo esc_attr( $student_internal_id ); ?>]" 
                                                        class="ifs-educore-mark-cell-input inp-pr" 
                                                        data-max="<?php echo esc_attr( $pr_lim ); ?>" 
-                                                       value="<?php echo esc_attr( $curr_pr ); ?>" placeholder="0">
+                                                       value="<?php echo esc_attr( $curr_pr ); ?>" placeholder="0" style="width:75px; height:34px; text-align:center; border:1px solid #cbd5e1; border-radius:6px;">
                                             </td>
                                         <?php else : ?>
                                             <input type="hidden" name="practical_marks[<?php echo esc_attr( $student_internal_id ); ?>]" class="inp-pr" data-max="0" value="0">
                                         <?php endif; ?>
 
                                         <!-- Calculated Total -->
-                                        <td><strong class="cell-total-obt" style="font-size: 14px; color: #0f172a;"><?php echo esc_html( $curr_tot ); ?></strong></td>
+                                        <td style="padding:10px;"><strong class="cell-total-obt" style="font-size: 14px; color: #0f172a;"><?php echo esc_html( $curr_tot ); ?></strong></td>
 
                                         <!-- Evaluated Grade -->
-                                        <td>
-                                            <span class="ifs-educore-badge-grade cell-grade <?php echo $is_fail ? 'grade-fail' : ( '—' !== $curr_grd ? 'grade-pass' : '' ); ?>">
+                                        <td style="padding:10px;">
+                                            <span class="cell-grade" style="display:inline-block; padding:3px 8px; border-radius:4px; font-weight:700; font-size:12px; background:<?php echo $is_fail ? '#fee2e2' : '#ecfdf5'; ?>; color:<?php echo $is_fail ? '#dc2626' : '#047857'; ?>;">
                                                 <?php echo esc_html( $curr_grd ); ?>
                                             </span>
                                         </td>
 
                                         <!-- Evaluated GPA -->
-                                        <td><strong class="cell-gpa" style="color: <?php echo $is_fail ? '#dc2626' : '#00523c'; ?>;"><?php echo esc_html( $curr_gpa ); ?></strong></td>
+                                        <td style="padding:10px;"><strong class="cell-gpa" style="color: <?php echo $is_fail ? '#dc2626' : '#00523c'; ?>;"><?php echo esc_html( $curr_gpa ); ?></strong></td>
                                     </tr>
                                 <?php endforeach; else : ?>
                                     <tr>
-                                        <td colspan="<?php echo ( $pr_lim > 0 ) ? 9 : 8; ?>" style="padding: 40px; color: #94a3b8;">
+                                        <td colspan="<?php echo ( $pr_lim > 0 ) ? 9 : 8; ?>" style="padding: 40px; color: #94a3b8; text-align:center;">
                                             <?php esc_html_e( 'No active students found matching the selected academic parameters.', 'ifsedu-school-management' ); ?>
                                         </td>
                                     </tr>
@@ -859,8 +1073,8 @@ function educore_exams_marks_view() {
                     </div>
 
                     <?php if ( ! empty( $students_list ) ) : ?>
-                        <div style="text-align: right; margin-top: 24px;">
-                            <button type="submit" name="educore_save_marks_matrix" class="ifs-educore-btn-submit">
+                        <div style="text-align: right; margin-top: 20px;">
+                            <button type="submit" name="educore_save_marks_matrix" class="ifs-educore-btn-submit" style="background:#00523c; color:#fff; border:none; padding:10px 24px; border-radius:8px; font-weight:700; cursor:pointer;">
                                 <span class="dashicons dashicons-saved"></span>
                                 <?php esc_html_e( 'Save All Marks', 'ifsedu-school-management' ); ?>
                             </button>
@@ -903,8 +1117,6 @@ function educore_exams_marks_view() {
 
                     if (val > maxAllowed) {
                         input.value = maxAllowed;
-                        input.classList.add('is-clamped');
-                        setTimeout(function() { input.classList.remove('is-clamped'); }, 400);
                     } else if (val < 0) {
                         input.value = 0;
                     }
@@ -937,13 +1149,15 @@ function educore_exams_marks_view() {
 
                     if (failed) {
                         gradeBadge.textContent = 'F';
-                        gradeBadge.className   = 'ifs-educore-badge-grade cell-grade grade-fail';
+                        gradeBadge.style.background = '#fee2e2';
+                        gradeBadge.style.color = '#dc2626';
                         gpaCell.textContent    = '0.00';
                         gpaCell.style.color    = '#dc2626';
                     } else {
                         var res = computeGradeAndGpa(obtained, totalLimit);
                         gradeBadge.textContent = res.grade;
-                        gradeBadge.className   = 'ifs-educore-badge-grade cell-grade grade-pass';
+                        gradeBadge.style.background = '#ecfdf5';
+                        gradeBadge.style.color = '#047857';
                         gpaCell.textContent    = res.gpa;
                         gpaCell.style.color    = '#00523c';
                     }
@@ -952,7 +1166,6 @@ function educore_exams_marks_view() {
                 var table = document.getElementById('dptMarksEntryTable');
                 var form  = document.getElementById('educoreMarksMatrixForm');
 
-                // 1. Restore unsaved draft data from sessionStorage across page refresh
                 if (table) {
                     try {
                         var savedDraft = JSON.parse(sessionStorage.getItem(storageKey));
@@ -972,13 +1185,10 @@ function educore_exams_marks_view() {
                                 });
                             }
                         }
-                    } catch (e) {
-                        console.error('Failed to load session draft', e);
-                    }
+                    } catch (e) {}
 
-                    // 2. Track changes & save input into sessionStorage
                     table.addEventListener('input', function(e) {
-                        if (e.target.classList.contains('ifs-educore-mark-cell-input') || e.target.classList.contains('dpt-mark-cell-input')) {
+                        if (e.target.classList.contains('ifs-educore-mark-cell-input')) {
                             isDirty = true;
                             var row = e.target.closest('tr');
                             if (row) evaluateRow(row);
@@ -987,14 +1197,11 @@ function educore_exams_marks_view() {
                                 var draftData = JSON.parse(sessionStorage.getItem(storageKey)) || {};
                                 draftData[e.target.name] = e.target.value;
                                 sessionStorage.setItem(storageKey, JSON.stringify(draftData));
-                            } catch (err) {
-                                console.error('Failed to save to sessionStorage', err);
-                            }
+                            } catch (err) {}
                         }
                     });
                 }
 
-                // 3. Clear draft and dirty state on explicit save submission
                 if (form) {
                     form.addEventListener('submit', function() {
                         isDirty = false;
@@ -1002,7 +1209,6 @@ function educore_exams_marks_view() {
                     });
                 }
 
-                // 4. Trigger browser warning if trying to refresh / leave with unsaved changes
                 window.addEventListener('beforeunload', function(e) {
                     if (isDirty) {
                         e.preventDefault();
