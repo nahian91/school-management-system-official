@@ -31,7 +31,7 @@ function ifs_educore_get_sections_by_class_admit_handler() {
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $sections = $wpdb->get_col(
         $wpdb->prepare(
-            "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY section_name ASC",
+            "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY sort_order ASC, section_name ASC",
             $class_name
         )
     );
@@ -92,19 +92,26 @@ function educore_student_admit_card_view() {
     $table_units    = $wpdb->prefix . 'sms_academic_units';
     $table_exams    = $wpdb->prefix . 'sms_exams';
 
-    // Fetch Exams & Unique Classes
+    // Fetch Exams & Unique Classes (Ordered by sort_order)
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $exams       = $wpdb->get_results( "SELECT id, exam_name FROM `{$table_exams}` ORDER BY id DESC" );
-    $raw_classes = $wpdb->get_results( "SELECT DISTINCT class_name FROM `{$table_units}` WHERE class_name != ''" );
+    $exams = $wpdb->get_results( "SELECT id, exam_name FROM `{$table_exams}` ORDER BY id DESC" );
+    
+    $raw_classes_data = $wpdb->get_results( 
+        "SELECT class_name, MIN(sort_order) as min_sort 
+         FROM `{$table_units}` 
+         WHERE class_name IS NOT NULL AND class_name != '' 
+         GROUP BY class_name 
+         ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
+    );
     // phpcs:enable
 
     $classes = array();
-    if ( ! empty( $raw_classes ) ) {
-        usort( $raw_classes, function( $a, $b ) {
-            return strnatcasecmp( $a->class_name, $b->class_name );
-        } );
-        foreach ( $raw_classes as $cls_obj ) {
-            $classes[] = $cls_obj->class_name;
+    if ( ! empty( $raw_classes_data ) && is_array( $raw_classes_data ) ) {
+        foreach ( $raw_classes_data as $c_row ) {
+            $c_name = trim( (string) $c_row->class_name );
+            if ( ! empty( $c_name ) && ! in_array( $c_name, $classes, true ) ) {
+                $classes[] = $c_name;
+            }
         }
     }
 
@@ -124,7 +131,7 @@ function educore_student_admit_card_view() {
         // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $available_sections = $wpdb->get_col(
             $wpdb->prepare(
-                "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY section_name ASC",
+                "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY sort_order ASC, section_name ASC",
                 $selected_class
             )
         );
@@ -584,13 +591,13 @@ function educore_student_admit_card_view() {
                                         </div>
                                         <div class="ifs-educore-admit-title-badge">
                                             <?php
-printf(
-    /* translators: 1: Exam title, 2: Exam year */
-    esc_html__( 'ADMIT CARD : %1$s — %2$s', 'ifsedu-school-management' ),
-    esc_html( $exam_title ),
-    esc_html( $exam_year )
-);
-?>
+                                            printf(
+                                                /* translators: 1: Exam title, 2: Exam year */
+                                                esc_html__( 'ADMIT CARD : %1$s — %2$s', 'ifsedu-school-management' ),
+                                                esc_html( $exam_title ),
+                                                esc_html( $exam_year )
+                                            );
+                                            ?>
                                         </div>
                                     </div>
 

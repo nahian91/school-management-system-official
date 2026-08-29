@@ -117,23 +117,39 @@ function educore_exam_add_edit_view() {
     }
 
     // =========================================================================
-    // Query Distinct Class Names (No Sections)
+    // Query Distinct Class Names Ordered by sort_order
     // =========================================================================
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-    $raw_classes = $wpdb->get_col( "SELECT DISTINCT class_name FROM `{$table_units}` WHERE class_name IS NOT NULL AND class_name != ''" );
+    $raw_classes_data = $wpdb->get_results( 
+        "SELECT class_name, MIN(sort_order) as min_sort 
+         FROM `{$table_units}` 
+         WHERE class_name IS NOT NULL AND class_name != '' 
+         GROUP BY class_name 
+         ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
+    );
 
-    if ( empty( $raw_classes ) ) {
+    if ( empty( $raw_classes_data ) ) {
         $alt_table = $wpdb->get_var( "SHOW TABLES LIKE '%sms_academic_units'" );
         if ( $alt_table ) {
-            $raw_classes = $wpdb->get_col( "SELECT DISTINCT class_name FROM `{$alt_table}` WHERE class_name IS NOT NULL AND class_name != ''" );
+            $raw_classes_data = $wpdb->get_results( 
+                "SELECT class_name, MIN(sort_order) as min_sort 
+                 FROM `{$alt_table}` 
+                 WHERE class_name IS NOT NULL AND class_name != '' 
+                 GROUP BY class_name 
+                 ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
+            );
         }
     }
     // phpcs:enable
 
     $class_list = array();
-    if ( ! empty( $raw_classes ) && is_array( $raw_classes ) ) {
-        $class_list = array_values( array_unique( array_filter( array_map( 'trim', $raw_classes ) ) ) );
-        natcasesort( $class_list );
+    if ( ! empty( $raw_classes_data ) && is_array( $raw_classes_data ) ) {
+        foreach ( $raw_classes_data as $c_row ) {
+            $c_name = trim( (string) $c_row->class_name );
+            if ( ! empty( $c_name ) && ! in_array( $c_name, $class_list, true ) ) {
+                $class_list[] = $c_name;
+            }
+        }
     }
     ?>
 

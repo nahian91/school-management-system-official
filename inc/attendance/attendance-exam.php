@@ -81,11 +81,12 @@ function educore_exam_attendance_view() {
         if ( $teacher_id > 0 ) {
             $allocations = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT DISTINCT u.class_name, u.section_name, s.subject_name 
+                    "SELECT DISTINCT u.class_name, u.section_name, u.sort_order, s.subject_name 
                      FROM `{$table_teacher_subjects}` ts
                      INNER JOIN `{$table_units}` u ON ts.class_id = u.id
                      INNER JOIN `{$table_subjects}` s ON ts.subject_id = s.id
-                     WHERE ts.teacher_id = %d",
+                     WHERE ts.teacher_id = %d
+                     ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, s.subject_order ASC",
                     $teacher_id
                 )
             );
@@ -188,17 +189,28 @@ function educore_exam_attendance_view() {
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $exams = $wpdb->get_results( "SELECT id, exam_name FROM `{$table_exams}` ORDER BY id DESC" );
 
-    // Fetch Unique Classes and build section maps with Natural Numeric Sorting
-    $raw_units = $wpdb->get_results( "SELECT id, class_name, section_name, dept_name FROM `{$table_units}` WHERE class_name != ''" );
+    // Fetch Unique Classes and build section maps prioritizing sort_order
+    $raw_units = $wpdb->get_results( 
+        "SELECT id, class_name, section_name, dept_name, sort_order 
+         FROM `{$table_units}` 
+         WHERE class_name != '' 
+         ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC" 
+    );
     // phpcs:enable
 
     $academic_classes   = array();
+    $class_order_map    = array();
     $class_section_map  = array();
     $class_subject_map  = array();
 
     if ( ! empty( $raw_units ) ) {
         foreach ( $raw_units as $unit ) {
             $c_name = trim( (string) $unit->class_name );
+            $s_ord  = isset( $unit->sort_order ) ? (int) $unit->sort_order : 0;
+
+            if ( ! isset( $class_order_map[ $c_name ] ) || $s_ord < $class_order_map[ $c_name ] ) {
+                $class_order_map[ $c_name ] = $s_ord;
+            }
 
             // If teacher mode and has assigned classes, filter dropdowns accordingly
             if ( ! $is_admin && ! empty( $teacher_assigned_classes ) && ! in_array( $c_name, $teacher_assigned_classes, true ) ) {
@@ -221,10 +233,11 @@ function educore_exam_attendance_view() {
             if ( ! $is_admin && $teacher_id > 0 ) {
                 $subs = $wpdb->get_results(
                     $wpdb->prepare( 
-                        "SELECT DISTINCT s.subject_name, s.subject_code, s.total_marks, s.pass_marks, s.cq_marks, s.cq_pass, s.mcq_marks, s.mcq_pass, s.practical_marks, s.practical_pass 
+                        "SELECT DISTINCT s.subject_name, s.subject_code, s.subject_order, s.total_marks, s.pass_marks, s.cq_marks, s.cq_pass, s.mcq_marks, s.mcq_pass, s.practical_marks, s.practical_pass 
                          FROM `{$table_teacher_subjects}` ts
                          INNER JOIN `{$table_subjects}` s ON ts.subject_id = s.id
-                         WHERE ts.teacher_id = %d AND ts.class_id = %d", 
+                         WHERE ts.teacher_id = %d AND ts.class_id = %d
+                         ORDER BY s.subject_order ASC, s.subject_name ASC", 
                         $teacher_id,
                         intval( $unit->id )
                     )
@@ -232,9 +245,10 @@ function educore_exam_attendance_view() {
             } else {
                 $subs = $wpdb->get_results(
                     $wpdb->prepare( 
-                        "SELECT subject_name, subject_code, total_marks, pass_marks, cq_marks, cq_pass, mcq_marks, mcq_pass, practical_marks, practical_pass 
+                        "SELECT subject_name, subject_code, subject_order, total_marks, pass_marks, cq_marks, cq_pass, mcq_marks, mcq_pass, practical_marks, practical_pass 
                          FROM `{$table_subjects}` 
-                         WHERE class_id = %d", 
+                         WHERE class_id = %d
+                         ORDER BY subject_order ASC, subject_name ASC", 
                         intval( $unit->id )
                     )
                 );
@@ -274,7 +288,7 @@ function educore_exam_attendance_view() {
 
         if ( $is_admin || empty( $teacher_assigned_classes ) ) {
             // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $all_global_subs = $wpdb->get_results( "SELECT subject_name, subject_code, total_marks, pass_marks, cq_marks, cq_pass, mcq_marks, mcq_pass, practical_marks, practical_pass FROM `{$table_subjects}` ORDER BY subject_name ASC" );
+            $all_global_subs = $wpdb->get_results( "SELECT subject_name, subject_code, subject_order, total_marks, pass_marks, cq_marks, cq_pass, mcq_marks, mcq_pass, practical_marks, practical_pass FROM `{$table_subjects}` ORDER BY subject_order ASC, subject_name ASC" );
             // phpcs:enable
             
             foreach ( $academic_classes as $c_name ) {
@@ -297,9 +311,16 @@ function educore_exam_attendance_view() {
             }
         }
 
-        // Apply Natural Numeric Sorting to Classes (1, 2, 3, 5, 6, 7, 10...)
+        // Apply sort_order then Natural Numeric Sorting to Classes
         $academic_classes = array_values( array_unique( $academic_classes ) );
-        usort( $academic_classes, 'strnatcasecmp' );
+        usort( $academic_classes, function( $a, $b ) use ( $class_order_map ) {
+            $order_a = isset( $class_order_map[ $a ] ) ? $class_order_map[ $a ] : 0;
+            $order_b = isset( $class_order_map[ $b ] ) ? $class_order_map[ $b ] : 0;
+            if ( $order_a !== $order_b ) {
+                return $order_a - $order_b;
+            }
+            return strnatcasecmp( $a, $b );
+        } );
     }
 
     $available_sections = array();

@@ -71,6 +71,7 @@ function educore_render_class_setup_view() {
         if ( isset( $_POST['class_setup_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['class_setup_nonce'] ) ), 'class_setup_action' ) ) {
             $class_name   = isset( $_POST['class_name'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['class_name'] ) ) ) : '';
             $section_name = isset( $_POST['section_name'] ) ? trim( sanitize_text_field( wp_unslash( $_POST['section_name'] ) ) ) : '';
+            $sort_order   = isset( $_POST['sort_order'] ) ? absint( wp_unslash( $_POST['sort_order'] ) ) : 0;
             $row_id       = isset( $_POST['row_id'] ) ? absint( wp_unslash( $_POST['row_id'] ) ) : 0;
 
             if ( ! empty( $class_name ) ) {
@@ -100,8 +101,9 @@ function educore_render_class_setup_view() {
                     $data = array(
                         'class_name'   => $class_name,
                         'section_name' => $section_name,
+                        'sort_order'   => $sort_order,
                     );
-                    $format = array( '%s', '%s' );
+                    $format = array( '%s', '%s', '%d' );
 
                     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, PluginCheck.Security.DirectDB.UnescapedDBParameter
                     if ( $row_id > 0 ) {
@@ -135,17 +137,24 @@ function educore_render_class_setup_view() {
         }
     }
 
-    // 4. Natural Numeric Sorting Fetch Strategy (1, 2, 3... 10, 11, 12)
+    // 4. Fetch Strategy (Prioritize sort_order, then fallback to Natural Numeric Sorting)
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $classes = $wpdb->get_results( 
         "SELECT * FROM `{$wpdb->prefix}sms_academic_units` 
-         ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC"
+         ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC"
     );
     // phpcs:enable
 
-    // Perfect Natural Sorting fallback for mixed strings (e.g. "Class 1", "Class 10")
+    // Natural Sorting fallback for mixed strings with equal sort_order
     if ( ! empty( $classes ) && is_array( $classes ) ) {
         usort( $classes, function( $a, $b ) {
+            $order_a = isset( $a->sort_order ) ? (int) $a->sort_order : 0;
+            $order_b = isset( $b->sort_order ) ? (int) $b->sort_order : 0;
+
+            if ( $order_a !== $order_b ) {
+                return $order_a - $order_b;
+            }
+
             $res = strnatcasecmp( (string) $a->class_name, (string) $b->class_name );
             if ( 0 === $res ) {
                 return strnatcasecmp( (string) $a->section_name, (string) $b->section_name );
@@ -163,7 +172,6 @@ function educore_render_class_setup_view() {
                 $unique_class_names[] = $c_val;
             }
         }
-        usort( $unique_class_names, 'strnatcasecmp' );
     }
     ?>
 
@@ -173,15 +181,20 @@ function educore_render_class_setup_view() {
             <?php wp_nonce_field( 'class_setup_action', 'class_setup_nonce' ); ?>
             <input type="hidden" name="row_id" value="<?php echo esc_attr( $edit_id ); ?>">
             
-            <div style="display:flex; gap:16px; align-items:flex-end; max-width:800px; flex-wrap:wrap;">
-                <div style="flex:1; min-width:220px;">
+            <div style="display:flex; gap:16px; align-items:flex-end; max-width:900px; flex-wrap:wrap;">
+                <div style="flex:2; min-width:200px;">
                     <label class="ifs-educore-form-label" style="display:block; font-size:13px; font-weight:600; color:#475569; margin-bottom:6px;"><?php esc_html_e( 'Class Name', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
                     <input type="text" name="class_name" class="ifs-educore-field-input" placeholder="<?php esc_attr_e( 'e.g. 1, 2, Class 9', 'ifsedu-school-management' ); ?>" value="<?php echo $edit_row ? esc_attr( $edit_row->class_name ) : ''; ?>" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; height:38px;" required>
                 </div>
 
-                <div style="flex:1; min-width:220px;">
+                <div style="flex:2; min-width:200px;">
                     <label class="ifs-educore-form-label" style="display:block; font-size:13px; font-weight:600; color:#475569; margin-bottom:6px;"><?php esc_html_e( 'Section Name', 'ifsedu-school-management' ); ?></label>
                     <input type="text" name="section_name" class="ifs-educore-field-input" placeholder="<?php esc_attr_e( 'e.g. Section A, Science, Rose', 'ifsedu-school-management' ); ?>" value="<?php echo $edit_row ? esc_attr( $edit_row->section_name ) : ''; ?>" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; height:38px;">
+                </div>
+
+                <div style="flex:1; min-width:120px;">
+                    <label class="ifs-educore-form-label" style="display:block; font-size:13px; font-weight:600; color:#475569; margin-bottom:6px;"><?php esc_html_e( 'Order Class', 'ifsedu-school-management' ); ?></label>
+                    <input type="number" name="sort_order" class="ifs-educore-field-input" placeholder="<?php esc_attr_e( 'e.g. 1', 'ifsedu-school-management' ); ?>" value="<?php echo ( $edit_row && isset( $edit_row->sort_order ) ) ? esc_attr( $edit_row->sort_order ) : '0'; ?>" min="0" step="1" style="width:100%; padding:8px 12px; border:1px solid #cbd5e1; border-radius:6px; height:38px;">
                 </div>
 
                 <div>
@@ -219,8 +232,9 @@ function educore_render_class_setup_view() {
             <table class="ifs-educore-architecture-table" id="ifs_educore_units_table" style="width:100%; border-collapse:collapse;">
                 <thead>
                     <tr style="background:#f8fafc; text-align:left;">
-                        <th style="width: 40%; padding:12px 16px; border-bottom:2px solid #e2e8f0; color:#475569; font-size:12px; text-transform:uppercase;"><?php esc_html_e( 'Class Name', 'ifsedu-school-management' ); ?></th>
-                        <th style="width: 40%; padding:12px 16px; border-bottom:2px solid #e2e8f0; color:#475569; font-size:12px; text-transform:uppercase;"><?php esc_html_e( 'Section Name', 'ifsedu-school-management' ); ?></th>
+                        <th style="width: 15%; padding:12px 16px; border-bottom:2px solid #e2e8f0; color:#475569; font-size:12px; text-transform:uppercase;"><?php esc_html_e( 'Order', 'ifsedu-school-management' ); ?></th>
+                        <th style="width: 35%; padding:12px 16px; border-bottom:2px solid #e2e8f0; color:#475569; font-size:12px; text-transform:uppercase;"><?php esc_html_e( 'Class Name', 'ifsedu-school-management' ); ?></th>
+                        <th style="width: 30%; padding:12px 16px; border-bottom:2px solid #e2e8f0; color:#475569; font-size:12px; text-transform:uppercase;"><?php esc_html_e( 'Section Name', 'ifsedu-school-management' ); ?></th>
                         <th style="width: 20%; text-align: right; padding:12px 16px; border-bottom:2px solid #e2e8f0; color:#475569; font-size:12px; text-transform:uppercase;"><?php esc_html_e( 'Actions', 'ifsedu-school-management' ); ?></th>
                     </tr>
                 </thead>
@@ -229,8 +243,12 @@ function educore_render_class_setup_view() {
                         $cls_internal_id = absint( $cls->id );
                         $edit_link       = add_query_arg( array( 'action' => 'edit_unit', 'id' => $cls_internal_id ), $base_url );
                         $delete_link     = wp_nonce_url( add_query_arg( array( 'action' => 'delete_unit', 'id' => $cls_internal_id ), $base_url ), 'delete_unit_action_' . $cls_internal_id );
+                        $display_order   = isset( $cls->sort_order ) ? (int) $cls->sort_order : 0;
                     ?>
                         <tr style="border-bottom:1px solid #f1f5f9;" data-class-name="<?php echo esc_attr( $cls->class_name ); ?>">
+                            <td style="color: #64748b; font-weight: 600; padding:12px 16px;">
+                                <span style="background:#f1f5f9; padding:2px 8px; border-radius:4px; font-size:12px;"><?php echo esc_html( $display_order ); ?></span>
+                            </td>
                             <td style="font-weight: 700; color: #0f172a; padding:12px 16px;"><?php echo esc_html( $cls->class_name ); ?></td>
                             <td style="color: #334155; padding:12px 16px;">
                                 <?php if ( ! empty( $cls->section_name ) ) : ?>
@@ -245,7 +263,7 @@ function educore_render_class_setup_view() {
                             </td>
                         </tr>
                     <?php endforeach; else : ?>
-                        <tr><td colspan="3" style="text-align:center; padding: 20px; color:#64748b;"><?php esc_html_e( 'No academic units configured yet.', 'ifsedu-school-management' ); ?></td></tr>
+                        <tr><td colspan="4" style="text-align:center; padding: 20px; color:#64748b;"><?php esc_html_e( 'No academic units configured yet.', 'ifsedu-school-management' ); ?></td></tr>
                     <?php endif; ?>
                 </tbody>
             </table>

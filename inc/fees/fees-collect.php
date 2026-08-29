@@ -36,7 +36,7 @@ function ifs_educore_get_sections_by_class_fee_handler() {
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $sections = $wpdb->get_col(
         $wpdb->prepare(
-            "SELECT DISTINCT section_name FROM `{$table_units}` WHERE (class_name = %s OR class_name = %s) AND section_name != '' ORDER BY section_name ASC",
+            "SELECT DISTINCT section_name FROM `{$table_units}` WHERE (class_name = %s OR class_name = %s) AND section_name != '' ORDER BY sort_order ASC, section_name ASC",
             $class_name,
             $clean_class
         )
@@ -392,15 +392,22 @@ function educore_fees_collect_view() {
         }
     }
 
-    // Fetch Unique Classes for Filter Console with Natural Numeric Sorting
+    // Fetch Unique Classes ordered primarily by sort_order
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $raw_classes = $wpdb->get_results( "SELECT DISTINCT class_name FROM `{$table_units}` WHERE class_name != '' ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC" );
+    $raw_classes_data = $wpdb->get_results( 
+        "SELECT class_name, MIN(sort_order) as min_sort 
+         FROM `{$table_units}` 
+         WHERE class_name IS NOT NULL AND class_name != '' 
+         GROUP BY class_name 
+         ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
+    );
     // phpcs:enable
 
-    if ( ! empty( $raw_classes ) && is_array( $raw_classes ) ) {
-        usort( $raw_classes, function( $a, $b ) {
-            return strnatcasecmp( $a->class_name, $b->class_name );
-        } );
+    $raw_classes = array();
+    if ( ! empty( $raw_classes_data ) && is_array( $raw_classes_data ) ) {
+        foreach ( $raw_classes_data as $c_row ) {
+            $raw_classes[] = (object) array( 'class_name' => $c_row->class_name );
+        }
     }
 
     // Fetch Initial Active Students List
@@ -851,7 +858,12 @@ function educore_fees_collect_view() {
         function applyStudentDetails(d) {
             var $strip = $('#ifs_educore_student_info_strip');
             $('#ifs_educore_strip_student_name').text(d.full_name + ' (ID: ' + d.student_id + ')');
-            $('#ifs_educore_strip_student_class').text('Class ' + d.class_name + ' [' + d.shift + '] | Roll: #' + d.roll_no);
+            
+            var displayClassName = d.class_name;
+            if (!/^class\s+/i.test(displayClassName)) {
+                displayClassName = 'Class ' + displayClassName;
+            }
+            $('#ifs_educore_strip_student_class').text(displayClassName + ' [' + d.shift + '] | Roll: #' + d.roll_no);
             
             activeStudentWaiverPct = parseFloat(d.waiver_percentage) || 0;
 

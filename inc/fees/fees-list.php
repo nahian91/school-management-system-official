@@ -103,23 +103,29 @@ function educore_fees_list_view() {
     $filter_status    = isset( $_GET['filter_status'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_status'] ) ) : '';
     // phpcs:enable WordPress.Security.NonceVerification.Recommended
 
-    // 3. Fetch Dropdown Options Dynamically
+    // 3. Fetch Dropdown Options Dynamically ordered by sort_order
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $raw_classes = $wpdb->get_results( "SELECT DISTINCT class_name FROM `{$table_units}` WHERE class_name IS NOT NULL AND class_name != '' ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC" );
+    $raw_classes_data = $wpdb->get_results( 
+        "SELECT class_name, MIN(sort_order) as min_sort 
+         FROM `{$table_units}` 
+         WHERE class_name IS NOT NULL AND class_name != '' 
+         GROUP BY class_name 
+         ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
+    );
     // phpcs:enable
 
     $available_classes = array();
-    if ( ! empty( $raw_classes ) ) {
-        usort( $raw_classes, function( $a, $b ) {
-            return strnatcasecmp( $a->class_name, $b->class_name );
-        } );
-        foreach ( $raw_classes as $cls_obj ) {
-            $available_classes[] = $cls_obj->class_name;
+    if ( ! empty( $raw_classes_data ) && is_array( $raw_classes_data ) ) {
+        foreach ( $raw_classes_data as $c_row ) {
+            $c_name = trim( (string) $c_row->class_name );
+            if ( ! empty( $c_name ) && ! in_array( $c_name, $available_classes, true ) ) {
+                $available_classes[] = $c_name;
+            }
         }
     }
 
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $all_units = $wpdb->get_results( "SELECT id, class_name, section_name FROM `{$table_units}` WHERE section_name != '' ORDER BY section_name ASC" );
+    $all_units = $wpdb->get_results( "SELECT id, class_name, section_name, sort_order FROM `{$table_units}` WHERE section_name != '' ORDER BY sort_order ASC, section_name ASC" );
     // phpcs:enable
 
     // 4. Construct SQL Query WHERE Conditions
@@ -249,15 +255,14 @@ function educore_fees_list_view() {
                     <label for="filter_class"><?php esc_html_e( 'Class', 'ifsedu-school-management' ); ?></label>
                     <select name="filter_class" id="filter_class" class="ifs-educore-filter-select">
                         <option value=""><?php esc_html_e( 'All Classes', 'ifsedu-school-management' ); ?></option>
-                        <?php if ( ! empty( $available_classes ) ) : foreach ( $available_classes as $class ) : ?>
+                        <?php if ( ! empty( $available_classes ) ) : foreach ( $available_classes as $class ) : 
+                            $class_label = $class;
+                            if ( ! preg_match( '/^class\s+/i', $class_label ) ) {
+                                $class_label = sprintf( __( 'Class %s', 'ifsedu-school-management' ), $class );
+                            }
+                        ?>
                             <option value="<?php echo esc_attr( $class ); ?>" <?php selected( $filter_class, $class ); ?>>
-                                <?php
-                                printf(
-                                    /* translators: %s: Class name */
-                                    esc_html__( 'Class %s', 'ifsedu-school-management' ),
-                                    esc_html( $class )
-                                );
-                                ?>
+                                <?php echo esc_html( $class_label ); ?>
                             </option>
                         <?php endforeach; endif; ?>
                     </select>
@@ -521,7 +526,7 @@ function educore_fees_list_view() {
     <!-- Dynamic Script Layer: Section Chaining, Modal Control & DataTables Engine -->
     <script type="text/javascript">
     document.addEventListener('DOMContentLoaded', function() {
-        var unitsMap     = <?php echo wp_json_encode( ! empty( $all_units ) ? $all_units : array() ); ?>;
+        var unitsMap       = <?php echo wp_json_encode( ! empty( $all_units ) ? $all_units : array() ); ?>;
         var currentSection = "<?php echo esc_js( $filter_section ); ?>";
         var classSelect    = document.getElementById('filter_class');
         var sectionSelect  = document.getElementById('filter_section');
@@ -567,7 +572,7 @@ function educore_fees_list_view() {
         // --------------------------------------------------------------------------
         // EDIT MODAL AJAX ENGINE FOR FEES LEDGER
         // --------------------------------------------------------------------------
-        var modal        = document.getElementById('ifs_educore_edit_fee_modal');
+        var modal          = document.getElementById('ifs_educore_edit_fee_modal');
         var closeModalBtn  = document.getElementById('ifs_educore_close_fee_modal');
         var cancelModalBtn = document.getElementById('ifs_educore_cancel_fee_edit');
         var editForm       = document.getElementById('ifs_educore_edit_fee_form');

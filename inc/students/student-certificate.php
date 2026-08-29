@@ -383,15 +383,27 @@ function educore_student_certificate_view() {
     // 2. FORM FILTER VIEW (DEFAULT)
     // =========================================================================
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $raw_units = $wpdb->get_results( "SELECT class_name, section_name, dept_name FROM `{$table_units}` WHERE class_name != ''" );
+    $raw_units = $wpdb->get_results( 
+        "SELECT class_name, section_name, dept_name, sort_order 
+         FROM `{$table_units}` 
+         WHERE class_name != '' 
+         ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC" 
+    );
     // phpcs:enable
     
     $unique_classes    = array();
+    $class_order_map   = array();
     $class_section_map = array();
     
     if ( ! empty( $raw_units ) ) {
         foreach ( $raw_units as $unit ) {
-            $c = trim( (string) $unit->class_name );
+            $c     = trim( (string) $unit->class_name );
+            $s_ord = isset( $unit->sort_order ) ? (int) $unit->sort_order : 0;
+
+            if ( ! isset( $class_order_map[ $c ] ) || $s_ord < $class_order_map[ $c ] ) {
+                $class_order_map[ $c ] = $s_ord;
+            }
+
             if ( ! isset( $class_section_map[ $c ] ) ) {
                 $class_section_map[ $c ] = array();
                 $unique_classes[] = $c;
@@ -410,7 +422,14 @@ function educore_student_certificate_view() {
         }
 
         $unique_classes = array_values( array_unique( $unique_classes ) );
-        usort( $unique_classes, 'strnatcasecmp' );
+        usort( $unique_classes, function( $a, $b ) use ( $class_order_map ) {
+            $order_a = isset( $class_order_map[ $a ] ) ? $class_order_map[ $a ] : 0;
+            $order_b = isset( $class_order_map[ $b ] ) ? $class_order_map[ $b ] : 0;
+            if ( $order_a !== $order_b ) {
+                return $order_a - $order_b;
+            }
+            return strnatcasecmp( $a, $b );
+        } );
     }
 
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter

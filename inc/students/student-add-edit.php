@@ -57,16 +57,23 @@ function educore_student_add_edit_view() {
         $generated_student_id = $configured_prefix . str_pad( (string) $next_num, 4, '0', STR_PAD_LEFT );
     }
 
-    // Natural Serial Sorting for Classes & Class-to-Section Mapping
+    // Fetch Academic Units ordered primarily by sort_order
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $raw_units = $wpdb->get_results( "SELECT class_name, section_name, dept_name FROM `{$table_units}` WHERE class_name != ''" );
+    $raw_units = $wpdb->get_results( "SELECT class_name, section_name, dept_name, sort_order FROM `{$table_units}` WHERE class_name != '' ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC" );
     // phpcs:enable
     $class_section_map = array();
+    $class_order_map   = array();
     $academic_classes  = array();
 
     if ( ! empty( $raw_units ) ) {
         foreach ( $raw_units as $unit ) {
             $c_name = trim( $unit->class_name );
+            $s_ord  = isset( $unit->sort_order ) ? (int) $unit->sort_order : 0;
+
+            if ( ! isset( $class_order_map[ $c_name ] ) || $s_ord < $class_order_map[ $c_name ] ) {
+                $class_order_map[ $c_name ] = $s_ord;
+            }
+
             if ( ! isset( $class_section_map[ $c_name ] ) ) {
                 $class_section_map[ $c_name ] = array();
                 $academic_classes[] = $c_name;
@@ -85,7 +92,14 @@ function educore_student_add_edit_view() {
         }
 
         $academic_classes = array_values( array_unique( $academic_classes ) );
-        usort( $academic_classes, 'strnatcasecmp' );
+        usort( $academic_classes, function( $a, $b ) use ( $class_order_map ) {
+            $order_a = isset( $class_order_map[ $a ] ) ? $class_order_map[ $a ] : 0;
+            $order_b = isset( $class_order_map[ $b ] ) ? $class_order_map[ $b ] : 0;
+            if ( $order_a !== $order_b ) {
+                return $order_a - $order_b;
+            }
+            return strnatcasecmp( $a, $b );
+        } );
     }
 
     // Fetch active Staff Members for Waiver Reference

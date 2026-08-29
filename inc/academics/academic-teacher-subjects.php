@@ -91,26 +91,27 @@ function educore_teacher_subjects_view() {
     $teachers = $wpdb->get_results( "SELECT id, full_name, designation, phone FROM `{$table_staff}` WHERE status = 'Active' ORDER BY full_name ASC" );
 
     $units_raw = $wpdb->get_results( "
-        SELECT id, class_name, section_name 
+        SELECT id, class_name, section_name, sort_order 
         FROM `{$table_units}` 
         WHERE class_name != '' 
-        ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC
+        ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC
     " );
 
     $subjects = $wpdb->get_results( "
-        SELECT s.id, s.subject_name, s.subject_code, s.class_id, u.class_name, u.section_name 
+        SELECT s.id, s.subject_name, s.subject_code, s.class_id, u.class_name, u.section_name, u.sort_order as class_sort_order 
         FROM `{$table_subjects}` s 
         LEFT JOIN `{$table_units}` u ON s.class_id = u.id 
-        ORDER BY s.subject_order ASC, s.subject_name ASC
+        ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, s.subject_order ASC, s.subject_name ASC
     " );
 
+    // Ordered by Class first (sort_order -> numeric class -> class name -> section), then subject order and teacher name
     $assignments = $wpdb->get_results( "
-        SELECT ts.id, ts.teacher_id, ts.class_id, ts.subject_id, t.full_name as teacher_name, t.designation, s.subject_name, s.subject_code, u.class_name, u.section_name 
+        SELECT ts.id, ts.teacher_id, ts.class_id, ts.subject_id, t.full_name as teacher_name, t.designation, s.subject_name, s.subject_code, s.subject_order, u.class_name, u.section_name, u.sort_order as class_sort_order 
         FROM `{$table_teacher_subjects}` ts
         INNER JOIN `{$table_staff}` t ON ts.teacher_id = t.id
         INNER JOIN `{$table_subjects}` s ON ts.subject_id = s.id
         INNER JOIN `{$table_units}` u ON ts.class_id = u.id
-        ORDER BY t.full_name ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC
+        ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, s.subject_order ASC, s.subject_name ASC, t.full_name ASC
     " );
 
     $unique_classes = array();
@@ -375,7 +376,7 @@ function educore_teacher_subjects_view() {
             </form>
         </div>
 
-        <!-- Allocation Matrix Directory -->
+        <!-- Allocation Matrix Directory (Ordered by Class) -->
         <div class="ifs-educore-ts-card">
             <div class="ifs-educore-card-header">
                 <h3 class="ifs-educore-card-title">
@@ -394,10 +395,10 @@ function educore_teacher_subjects_view() {
                 <table class="ifs-educore-matrix-table" id="ts_matrix_table">
                     <thead>
                         <tr>
-                            <th style="width: 30%;"><?php esc_html_e( 'Teacher', 'ifsedu-school-management' ); ?></th>
                             <th style="width: 20%;"><?php esc_html_e( 'Class', 'ifsedu-school-management' ); ?></th>
                             <th style="width: 18%;"><?php esc_html_e( 'Section', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 22%;"><?php esc_html_e( 'Subject', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 24%;"><?php esc_html_e( 'Subject', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 28%;"><?php esc_html_e( 'Teacher', 'ifsedu-school-management' ); ?></th>
                             <th style="width: 10%; text-align:right;"><?php esc_html_e( 'Action', 'ifsedu-school-management' ); ?></th>
                         </tr>
                     </thead>
@@ -408,16 +409,7 @@ function educore_teacher_subjects_view() {
                             $section_display = ! empty( $row->section_name ) ? $row->section_name : '—';
                             $initial = ! empty( $row->teacher_name ) ? strtoupper( mb_substr( trim( $row->teacher_name ), 0, 1 ) ) : 'T';
                         ?>
-                            <tr class="ts-matrix-row" data-searchable="<?php echo esc_attr( strtolower( (string) ( $row->teacher_name . ' ' . $row->class_name . ' ' . $row->section_name . ' ' . $row->subject_name . ' ' . $row->subject_code ) ) ); ?>">
-                                <td>
-                                    <div style="display:flex; align-items:center; gap:8px;">
-                                        <div class="ifs-teacher-avatar-tag"><?php echo esc_html( $initial ); ?></div>
-                                        <div>
-                                            <strong style="color:#0f172a; display:block;"><?php echo esc_html( $row->teacher_name ); ?></strong>
-                                            <small style="color:#64748b; font-size:11px;"><?php echo esc_html( $row->designation ); ?></small>
-                                        </div>
-                                    </div>
-                                </td>
+                            <tr class="ts-matrix-row" data-searchable="<?php echo esc_attr( strtolower( (string) ( $row->class_name . ' ' . $row->section_name . ' ' . $row->subject_name . ' ' . $row->subject_code . ' ' . $row->teacher_name ) ) ); ?>">
                                 <td>
                                     <span style="background:#eff6ff; color:#2563eb; padding:2px 8px; border-radius:5px; font-weight:700; font-size:12px;">
                                         <?php echo esc_html( $row->class_name ); ?>
@@ -433,6 +425,15 @@ function educore_teacher_subjects_view() {
                                     <?php if ( $row->subject_code ) : ?>
                                         <code style="font-size:11px; background:#f1f5f9; padding:2px 4px; border-radius:4px; margin-left:4px;"><?php echo esc_html( $row->subject_code ); ?></code>
                                     <?php endif; ?>
+                                </td>
+                                <td>
+                                    <div style="display:flex; align-items:center; gap:8px;">
+                                        <div class="ifs-teacher-avatar-tag"><?php echo esc_html( $initial ); ?></div>
+                                        <div>
+                                            <strong style="color:#0f172a; display:block;"><?php echo esc_html( $row->teacher_name ); ?></strong>
+                                            <small style="color:#64748b; font-size:11px;"><?php echo esc_html( $row->designation ); ?></small>
+                                        </div>
+                                    </div>
                                 </td>
                                 <td style="text-align:right;">
                                     <a href="<?php echo esc_url( $del_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Remove this subject allocation?', 'ifsedu-school-management' ) ); ?>');" class="ifs-educore-btn-del" title="<?php esc_attr_e( 'Delete Assignment', 'ifsedu-school-management' ); ?>">

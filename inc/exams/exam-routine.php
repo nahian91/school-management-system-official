@@ -3,7 +3,7 @@
  * Examination Timetable & Routine Scheduler View
  * File: inc/exams/exam-routine.php
  * Text Domain: ifsedu-school-management
- * Updated: Multi-Shift Support (No Shift, Morning Shift, Day Shift)
+ * Updated: Multi-Shift Support & Class Order Priority
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -86,11 +86,11 @@ function educore_exam_routine_view() {
 
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $exams    = $wpdb->get_results( "SELECT id, exam_name FROM `{$table_exams}` ORDER BY id DESC" );
-    $classes  = $wpdb->get_results( "SELECT id, class_name, section_name FROM `{$table_units}` WHERE class_name != '' ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC" );
-    $subjects = $wpdb->get_results( "SELECT id, subject_name, subject_code, class_id FROM `{$table_subjects}` ORDER BY subject_name ASC" );
+    $classes  = $wpdb->get_results( "SELECT id, class_name, section_name, sort_order FROM `{$table_units}` WHERE class_name != '' ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC" );
+    $subjects = $wpdb->get_results( "SELECT id, subject_name, subject_code, class_id, subject_order FROM `{$table_subjects}` ORDER BY subject_order ASC, subject_name ASC" );
     // phpcs:enable
 
-    // Fetch Filtered Schedules via Unified Dynamic Query Builder
+    // Fetch Filtered Schedules via Unified Dynamic Query Builder (Ordered by Date, Class sort_order, and Start Time)
     $where_clauses = array( '1=1' );
     $query_params  = array();
 
@@ -111,13 +111,13 @@ function educore_exam_routine_view() {
 
     $where_sql = ' WHERE ' . implode( ' AND ', $where_clauses );
 
-    $schedules_sql = "SELECT er.*, e.exam_name, u.class_name, u.section_name, s.subject_name, s.subject_code 
+    $schedules_sql = "SELECT er.*, e.exam_name, u.class_name, u.section_name, u.sort_order as class_sort_order, s.subject_name, s.subject_code, s.subject_order 
                       FROM `{$table_exam_routine}` er
                       INNER JOIN `{$table_exams}` e ON er.exam_id = e.id
                       INNER JOIN `{$table_units}` u ON er.class_id = u.id
                       INNER JOIN `{$table_subjects}` s ON er.subject_id = s.id
                       {$where_sql}
-                      ORDER BY er.exam_date ASC, er.start_time ASC";
+                      ORDER BY er.exam_date ASC, u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, er.start_time ASC";
 
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     if ( ! empty( $query_params ) ) {

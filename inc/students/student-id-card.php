@@ -63,17 +63,24 @@ function educore_student_id_card_view() {
     $table_students = $wpdb->prefix . 'sms_students';
     $table_units    = $wpdb->prefix . 'sms_academic_units';
 
-    // Fetch all academic units
+    // Fetch all academic units ordered by sort_order
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $raw_academic_units = $wpdb->get_results( "SELECT class_name, section_name FROM `{$table_units}` WHERE class_name IS NOT NULL AND class_name != '' ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC" );
+    $raw_academic_units = $wpdb->get_results( "SELECT class_name, section_name, sort_order FROM `{$table_units}` WHERE class_name IS NOT NULL AND class_name != '' ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC" );
     // phpcs:enable
 
-    // Group sections under their respective classes
+    // Group sections under their respective classes and preserve sort_order
     $class_sections_map = array();
+    $class_order_map    = array();
+
     if ( ! empty( $raw_academic_units ) ) {
         foreach ( $raw_academic_units as $unit ) {
             $c_name = trim( (string) $unit->class_name );
             $s_name = trim( (string) $unit->section_name );
+            $s_ord  = isset( $unit->sort_order ) ? (int) $unit->sort_order : 0;
+
+            if ( ! isset( $class_order_map[ $c_name ] ) || $s_ord < $class_order_map[ $c_name ] ) {
+                $class_order_map[ $c_name ] = $s_ord;
+            }
 
             if ( ! isset( $class_sections_map[ $c_name ] ) ) {
                 $class_sections_map[ $c_name ] = array();
@@ -85,7 +92,15 @@ function educore_student_id_card_view() {
         }
     }
 
-    uksort( $class_sections_map, 'strnatcasecmp' );
+    // Sort classes by sort_order first, then natural comparison
+    uksort( $class_sections_map, function( $a, $b ) use ( $class_order_map ) {
+        $order_a = isset( $class_order_map[ $a ] ) ? $class_order_map[ $a ] : 0;
+        $order_b = isset( $class_order_map[ $b ] ) ? $class_order_map[ $b ] : 0;
+        if ( $order_a !== $order_b ) {
+            return $order_a - $order_b;
+        }
+        return strnatcasecmp( $a, $b );
+    } );
 
     // Read parameters from GET request
     // phpcs:disable WordPress.Security.NonceVerification.Recommended

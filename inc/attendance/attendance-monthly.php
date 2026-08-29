@@ -40,10 +40,11 @@ function educore_monthly_attendance_summary_view( $classes, $sections, $filter_c
         if ( $teacher_id ) {
             $allocations = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT DISTINCT u.id AS unit_id, u.class_name, u.section_name 
+                    "SELECT DISTINCT u.id AS unit_id, u.class_name, u.section_name, u.sort_order 
                      FROM `{$table_teacher_subjects}` ts
                      INNER JOIN `{$table_units}` u ON ts.class_id = u.id
-                     WHERE ts.teacher_id = %d AND u.class_name != ''",
+                     WHERE ts.teacher_id = %d AND u.class_name != ''
+                     ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC",
                     intval( $teacher_id )
                 )
             );
@@ -66,20 +67,36 @@ function educore_monthly_attendance_summary_view( $classes, $sections, $filter_c
         $classes = $teacher_assigned_classes;
     }
 
-    // Apply Natural Numeric Sorting to Classes
-    if ( ! empty( $classes ) ) {
-        usort( $classes, 'strnatcasecmp' );
+    // Build sort_order dictionary for classes
+    $class_order_rows = $wpdb->get_results( "SELECT class_name, MIN(sort_order) as min_sort FROM `{$table_units}` GROUP BY class_name" );
+    $class_order_map  = array();
+    if ( ! empty( $class_order_rows ) ) {
+        foreach ( $class_order_rows as $cor ) {
+            $class_order_map[ $cor->class_name ] = (int) $cor->min_sort;
+        }
     }
 
-    // 2. Fetch academic units scoped to teacher's assignments or global
+    // Apply sort_order then natural comparison to classes
+    if ( ! empty( $classes ) ) {
+        usort( $classes, function( $a, $b ) use ( $class_order_map ) {
+            $order_a = isset( $class_order_map[ $a ] ) ? $class_order_map[ $a ] : 0;
+            $order_b = isset( $class_order_map[ $b ] ) ? $class_order_map[ $b ] : 0;
+            if ( $order_a !== $order_b ) {
+                return $order_a - $order_b;
+            }
+            return strnatcasecmp( $a, $b );
+        } );
+    }
+
+    // 2. Fetch academic units scoped to teacher's assignments or global (Ordered by sort_order)
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     if ( ! $is_admin && ! empty( $assigned_unit_ids ) ) {
         $unit_placeholders = implode( ',', array_map( 'absint', $assigned_unit_ids ) );
         $all_units = $wpdb->get_results(
-            "SELECT id, class_name, section_name FROM `{$table_units}` WHERE id IN ({$unit_placeholders}) AND section_name != '' ORDER BY section_name ASC"
+            "SELECT id, class_name, section_name, sort_order FROM `{$table_units}` WHERE id IN ({$unit_placeholders}) AND section_name != '' ORDER BY sort_order ASC, section_name ASC"
         );
     } else {
-        $all_units = $wpdb->get_results( "SELECT id, class_name, section_name FROM `{$table_units}` WHERE section_name != '' ORDER BY section_name ASC" );
+        $all_units = $wpdb->get_results( "SELECT id, class_name, section_name, sort_order FROM `{$table_units}` WHERE section_name != '' ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC" );
     }
     // phpcs:enable
 

@@ -85,7 +85,7 @@ function educore_class_routine_view() {
         // Fallback if no specific section unit was chosen
         if ( 0 === $final_class_id && ! empty( $class_name_val ) ) {
             // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-            $unit_match = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM `{$table_units}` WHERE class_name = %s LIMIT 1", $class_name_val ) );
+            $unit_match = $wpdb->get_row( $wpdb->prepare( "SELECT id FROM `{$table_units}` WHERE class_name = %s ORDER BY sort_order ASC, id ASC LIMIT 1", $class_name_val ) );
             // phpcs:enable
             if ( $unit_match ) {
                 $final_class_id = (int) $unit_match->id;
@@ -147,36 +147,39 @@ function educore_class_routine_view() {
         }
     }
 
-    // 1. Fetch Distinct Classes from Class Setup (sms_academic_units)
+    // 1. Fetch Distinct Classes ordered by sort_order
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $raw_classes = $wpdb->get_col( 
-        "SELECT DISTINCT class_name FROM `{$table_units}` 
+    $raw_classes_data = $wpdb->get_results( 
+        "SELECT class_name, MIN(sort_order) as min_sort_order 
+         FROM `{$table_units}` 
          WHERE class_name IS NOT NULL AND class_name != '' 
-         ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC"
+         GROUP BY class_name 
+         ORDER BY min_sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC"
     );
     // phpcs:enable
 
     $classes = array();
-    if ( ! empty( $raw_classes ) && is_array( $raw_classes ) ) {
-        $classes = array_values( array_unique( $raw_classes ) );
-        usort( $classes, 'strnatcasecmp' );
+    if ( ! empty( $raw_classes_data ) && is_array( $raw_classes_data ) ) {
+        foreach ( $raw_classes_data as $c_row ) {
+            $classes[] = $c_row->class_name;
+        }
     }
 
-    // 2. Fetch All Academic Units (Classes & Sections) from Class Setup
+    // 2. Fetch All Academic Units (Classes & Sections) ordered by sort_order
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $all_units = $wpdb->get_results( 
-        "SELECT id, class_name, section_name, dept_name 
+        "SELECT id, class_name, section_name, dept_name, sort_order 
          FROM `{$table_units}` 
          WHERE class_name != '' 
-         ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC"
+         ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC"
     );
 
-    // 3. Fetch Subjects mapped with Class/Unit Setup
+    // 3. Fetch Subjects mapped with Class/Unit Setup ordered by sort_order and subject_order
     $subjects = $wpdb->get_results(
-        "SELECT s.id, s.subject_name, s.subject_code, s.class_id, u.class_name, u.section_name 
+        "SELECT s.id, s.subject_name, s.subject_code, s.class_id, s.subject_order, u.class_name, u.section_name, u.sort_order as class_sort_order 
          FROM `{$table_subjects}` s 
          LEFT JOIN `{$table_units}` u ON s.class_id = u.id 
-         ORDER BY s.subject_name ASC"
+         ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, s.subject_order ASC, s.subject_name ASC"
     );
     // phpcs:enable
 
@@ -189,7 +192,7 @@ function educore_class_routine_view() {
     $filter_shift = isset( $_GET['filter_shift'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_shift'] ) ) : '';
     // phpcs:enable WordPress.Security.NonceVerification.Recommended
 
-    // Fetch Routines with Assigned Teacher Resolution via Unified Dynamic Builder
+    // Fetch Routines with Assigned Teacher Resolution via Unified Dynamic Builder (Ordered by Class sort_order)
     $where_clauses = array( '1=1' );
     $query_params  = array();
 
@@ -210,14 +213,14 @@ function educore_class_routine_view() {
 
     $where_sql = ' WHERE ' . implode( ' AND ', $where_clauses );
 
-    $routines_sql = "SELECT r.*, u.class_name, u.section_name, s.subject_name, st.full_name as teacher_name, st.designation 
+    $routines_sql = "SELECT r.*, u.class_name, u.section_name, u.sort_order as class_sort_order, s.subject_name, st.full_name as teacher_name, st.designation 
                      FROM `{$table_routine}` r 
                      LEFT JOIN `{$table_units}` u ON r.class_id = u.id 
                      LEFT JOIN `{$table_subjects}` s ON r.subject_id = s.id
                      LEFT JOIN `{$table_teacher_subjects}` ts ON (ts.subject_id = r.subject_id AND ts.class_id = r.class_id)
                      LEFT JOIN `{$table_staff}` st ON ts.teacher_id = st.id
                      {$where_sql}
-                     ORDER BY FIELD(r.day_name, 'Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'), CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, r.start_time ASC";
+                     ORDER BY FIELD(r.day_name, 'Saturday','Sunday','Monday','Tuesday','Wednesday','Thursday','Friday'), u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, r.start_time ASC";
 
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     if ( ! empty( $query_params ) ) {

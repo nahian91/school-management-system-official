@@ -28,18 +28,28 @@ function educore_students_list_view() {
          ORDER BY id DESC"
     );
 
-    // 2. Fetch Classes & Sections Map with Natural Numeric Sorting
+    // 2. Fetch Classes & Sections Map with sort_order Priority
     $raw_units = $wpdb->get_results(
-        "SELECT class_name, section_name, dept_name FROM `{$table_units}` WHERE class_name != ''"
+        "SELECT class_name, section_name, dept_name, sort_order 
+         FROM `{$table_units}` 
+         WHERE class_name != '' 
+         ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC"
     );
     // phpcs:enable
     
     $class_section_map = array();
+    $class_order_map   = array();
     $available_classes = array();
 
     if ( ! empty( $raw_units ) ) {
         foreach ( $raw_units as $unit ) {
             $c_name = trim( $unit->class_name );
+            $s_ord  = isset( $unit->sort_order ) ? (int) $unit->sort_order : 0;
+
+            if ( ! isset( $class_order_map[ $c_name ] ) || $s_ord < $class_order_map[ $c_name ] ) {
+                $class_order_map[ $c_name ] = $s_ord;
+            }
+
             if ( ! isset( $class_section_map[ $c_name ] ) ) {
                 $class_section_map[ $c_name ] = array();
                 $available_classes[] = $c_name;
@@ -58,7 +68,14 @@ function educore_students_list_view() {
         }
 
         $available_classes = array_values( array_unique( $available_classes ) );
-        usort( $available_classes, 'strnatcasecmp' );
+        usort( $available_classes, function( $a, $b ) use ( $class_order_map ) {
+            $order_a = isset( $class_order_map[ $a ] ) ? $class_order_map[ $a ] : 0;
+            $order_b = isset( $class_order_map[ $b ] ) ? $class_order_map[ $b ] : 0;
+            if ( $order_a !== $order_b ) {
+                return $order_a - $order_b;
+            }
+            return strnatcasecmp( $a, $b );
+        } );
     }
     ?>
 

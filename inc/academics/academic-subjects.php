@@ -55,7 +55,7 @@ function educore_render_subjects_view() {
                         $target_unit_ids[] = absint( str_replace( 'id:', '', $ukey ) );
                     } elseif ( strpos( $ukey, 'class:' ) === 0 ) {
                         $c_name = sanitize_text_field( str_replace( 'class:', '', $ukey ) );
-                        $c_ids  = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM `{$table_units}` WHERE class_name = %s", $c_name ) );
+                        $c_ids  = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM `{$table_units}` WHERE class_name = %s ORDER BY sort_order ASC, id ASC", $c_name ) );
                         if ( ! empty( $c_ids ) ) {
                             $target_unit_ids = array_merge( $target_unit_ids, array_map( 'absint', $c_ids ) );
                         }
@@ -151,7 +151,7 @@ function educore_render_subjects_view() {
                         $target_unit_ids[] = absint( str_replace( 'id:', '', $ukey ) );
                     } elseif ( strpos( $ukey, 'class:' ) === 0 ) {
                         $c_name = sanitize_text_field( str_replace( 'class:', '', $ukey ) );
-                        $c_ids  = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM `{$table_units}` WHERE class_name = %s", $c_name ) );
+                        $c_ids  = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM `{$table_units}` WHERE class_name = %s ORDER BY sort_order ASC, id ASC", $c_name ) );
                         if ( ! empty( $c_ids ) ) {
                             $target_unit_ids = array_merge( $target_unit_ids, array_map( 'absint', $c_ids ) );
                         }
@@ -243,18 +243,24 @@ function educore_render_subjects_view() {
     }
 
     // --------------------------------------------------------------------------
-    // 4. DATA QUERIES (SECTION FOR 9,10,11,12 ONLY)
+    // 4. DATA QUERIES (ORDERED BY sort_order FIRST)
     // --------------------------------------------------------------------------
-    $all_raw_units = $wpdb->get_results( "SELECT id, class_name, section_name FROM `{$table_units}` ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC", ARRAY_A );
+    $all_raw_units = $wpdb->get_results( 
+        "SELECT id, class_name, section_name, sort_order 
+         FROM `{$table_units}` 
+         ORDER BY sort_order ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC, section_name ASC", 
+        ARRAY_A 
+    );
 
     $display_units = array();
     $processed_classes = array();
 
     if ( ! empty( $all_raw_units ) ) {
         foreach ( $all_raw_units as $unit ) {
-            $c_name = trim( (string) $unit['class_name'] );
-            $s_name = trim( (string) $unit['section_name'] );
-            $u_id   = absint( $unit['id'] );
+            $c_name     = trim( (string) $unit['class_name'] );
+            $s_name     = trim( (string) $unit['section_name'] );
+            $u_id       = absint( $unit['id'] );
+            $sort_order = isset( $unit['sort_order'] ) ? (int) $unit['sort_order'] : 0;
 
             // Extract numeric class number (e.g., '10' from 'Class 10')
             preg_match( '/\d+/', $c_name, $matches );
@@ -268,6 +274,7 @@ function educore_render_subjects_view() {
                     'label'        => $label,
                     'class_name'   => $c_name,
                     'section_name' => $s_name,
+                    'sort_order'   => $sort_order,
                 );
             } else {
                 // Classes 1-8 show ONLY the Class Name (combined)
@@ -277,27 +284,43 @@ function educore_render_subjects_view() {
                         'label'        => $c_name,
                         'class_name'   => $c_name,
                         'section_name' => '',
+                        'sort_order'   => $sort_order,
                     );
                     $processed_classes[] = $c_name;
                 }
             }
         }
 
+        // Sort display units primarily by sort_order, then naturally by name
         usort( $display_units, function( $a, $b ) {
+            $order_a = isset( $a['sort_order'] ) ? (int) $a['sort_order'] : 0;
+            $order_b = isset( $b['sort_order'] ) ? (int) $b['sort_order'] : 0;
+
+            if ( $order_a !== $order_b ) {
+                return $order_a - $order_b;
+            }
+
             $res = strnatcasecmp( $a['class_name'], $b['class_name'] );
             return ( 0 === $res ) ? strnatcasecmp( $a['section_name'], $b['section_name'] ) : $res;
         } );
     }
 
     $subjects_list = $wpdb->get_results( "
-        SELECT s.*, u.class_name, u.section_name 
+        SELECT s.*, u.class_name, u.section_name, u.sort_order AS class_sort_order 
         FROM `{$table_subjects}` s 
         LEFT JOIN `{$table_units}` u ON s.class_id = u.id 
-        ORDER BY CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, s.subject_order ASC, s.subject_name ASC
+        ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, s.subject_order ASC, s.subject_name ASC
     " );
 
     if ( ! empty( $subjects_list ) && is_array( $subjects_list ) ) {
         usort( $subjects_list, function( $a, $b ) {
+            $c_order_a = isset( $a->class_sort_order ) ? (int) $a->class_sort_order : 0;
+            $c_order_b = isset( $b->class_sort_order ) ? (int) $b->class_sort_order : 0;
+
+            if ( $c_order_a !== $c_order_b ) {
+                return $c_order_a - $c_order_b;
+            }
+
             $class_a = $a->class_name ?: '';
             $class_b = $b->class_name ?: '';
             $res     = strnatcasecmp( (string) $class_a, (string) $class_b );

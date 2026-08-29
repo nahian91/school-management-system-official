@@ -29,7 +29,7 @@ function ifs_educore_get_target_sections_promotion_handler() {
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $sections = $wpdb->get_col(
         $wpdb->prepare(
-            "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY section_name ASC",
+            "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY sort_order ASC, section_name ASC",
             $class_name
         )
     );
@@ -118,13 +118,23 @@ function educore_student_promotion_view() {
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $exams = $wpdb->get_results( "SELECT id, exam_name FROM `{$table_exams}` ORDER BY id DESC" );
 
-    $raw_classes = $wpdb->get_col( "SELECT DISTINCT class_name FROM `{$table_units}` WHERE class_name != ''" );
+    $raw_classes_data = $wpdb->get_results( 
+        "SELECT class_name, MIN(sort_order) as min_sort 
+         FROM `{$table_units}` 
+         WHERE class_name IS NOT NULL AND class_name != '' 
+         GROUP BY class_name 
+         ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
+    );
     // phpcs:enable
 
     $academic_classes = array();
-    if ( ! empty( $raw_classes ) ) {
-        $academic_classes = array_values( array_unique( $raw_classes ) );
-        usort( $academic_classes, 'strnatcasecmp' );
+    if ( ! empty( $raw_classes_data ) && is_array( $raw_classes_data ) ) {
+        foreach ( $raw_classes_data as $c_row ) {
+            $c_name = trim( (string) $c_row->class_name );
+            if ( ! empty( $c_name ) && ! in_array( $c_name, $academic_classes, true ) ) {
+                $academic_classes[] = $c_name;
+            }
+        }
     }
 
     $available_sections = array();
@@ -132,7 +142,7 @@ function educore_student_promotion_view() {
         // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $available_sections = $wpdb->get_col(
             $wpdb->prepare(
-                "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY section_name ASC",
+                "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY sort_order ASC, section_name ASC",
                 $filter_class
             )
         );
@@ -275,13 +285,7 @@ function educore_student_promotion_view() {
                             <option value=""><?php esc_html_e( '-- Choose Class --', 'ifsedu-school-management' ); ?></option>
                             <?php foreach ( $academic_classes as $cls_name ) : ?>
                                 <option value="<?php echo esc_attr( $cls_name ); ?>" <?php selected( $filter_class, $cls_name ); ?>>
-                                    <?php
-                                    printf(
-                                        /* translators: %s: Class name */
-                                        esc_html__( 'Class %s', 'ifsedu-school-management' ),
-                                        esc_html( $cls_name )
-                                    );
-                                    ?>
+                                    <?php echo esc_html( $cls_name ); ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
@@ -366,13 +370,7 @@ function educore_student_promotion_view() {
                                     <option value=""><?php esc_html_e( '-- Choose Target Class --', 'ifsedu-school-management' ); ?></option>
                                     <?php foreach ( $academic_classes as $cls_name ) : ?>
                                         <option value="<?php echo esc_attr( $cls_name ); ?>">
-                                            <?php
-                                            printf(
-                                                /* translators: %s: Class name */
-                                                esc_html__( 'Class %s', 'ifsedu-school-management' ),
-                                                esc_html( $cls_name )
-                                            );
-                                            ?>
+                                            <?php echo esc_html( $cls_name ); ?>
                                         </option>
                                     <?php endforeach; ?>
                                 </select>

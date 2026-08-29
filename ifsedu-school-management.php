@@ -357,6 +357,7 @@ function educore_execute_database_migration() {
         class_name varchar(100) NOT NULL,
         section_name varchar(100) DEFAULT '' NOT NULL,
         dept_name varchar(100) DEFAULT '' NOT NULL,
+        sort_order int(11) DEFAULT 0 NOT NULL,
         PRIMARY KEY  (id)
     ) {$charset_collate};";
     dbDelta( $sql_academic_units );

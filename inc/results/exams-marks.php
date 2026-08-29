@@ -62,6 +62,15 @@ function ifs_educore_get_classes_by_exam_marks_handler() {
 
     $exam_classes = array_map( 'trim', explode( ',', (string) $raw_exam_classes ) );
 
+    // Fetch class sort order dictionary
+    $class_order_rows = $wpdb->get_results( "SELECT class_name, MIN(sort_order) as min_sort FROM `{$table_units}` GROUP BY class_name" );
+    $class_order_map  = array();
+    if ( ! empty( $class_order_rows ) ) {
+        foreach ( $class_order_rows as $cor ) {
+            $class_order_map[ $cor->class_name ] = (int) $cor->min_sort;
+        }
+    }
+
     // If teacher, intersect with teacher's assigned classes
     if ( ! $is_admin ) {
         $teacher_id = (int) $wpdb->get_var(
@@ -88,7 +97,16 @@ function ifs_educore_get_classes_by_exam_marks_handler() {
     }
 
     $exam_classes = array_values( array_unique( array_filter( $exam_classes ) ) );
-    natcasesort( $exam_classes );
+
+    // Sort by sort_order first, then natural case comparison
+    usort( $exam_classes, function( $a, $b ) use ( $class_order_map ) {
+        $order_a = isset( $class_order_map[ $a ] ) ? $class_order_map[ $a ] : 0;
+        $order_b = isset( $class_order_map[ $b ] ) ? $class_order_map[ $b ] : 0;
+        if ( $order_a !== $order_b ) {
+            return $order_a - $order_b;
+        }
+        return strnatcasecmp( $a, $b );
+    } );
     // phpcs:enable
 
     wp_send_json_success( array_values( $exam_classes ) );
@@ -152,7 +170,7 @@ function ifs_educore_get_sections_by_class_marks_handler() {
                      FROM `{$table_teacher_subjects}` ts
                      INNER JOIN `{$table_units}` u ON ts.class_id = u.id 
                      WHERE ts.teacher_id = %d AND u.class_name = %s AND u.section_name != '' 
-                     ORDER BY u.section_name ASC",
+                     ORDER BY u.sort_order ASC, u.section_name ASC",
                     $teacher_id,
                     $class_name
                 )
@@ -163,7 +181,7 @@ function ifs_educore_get_sections_by_class_marks_handler() {
 
     $sections = $wpdb->get_col(
         $wpdb->prepare(
-            "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY section_name ASC",
+            "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY sort_order ASC, section_name ASC",
             $class_name
         )
     );
@@ -227,12 +245,12 @@ function ifs_educore_get_subjects_for_marks_matrix_handler() {
         if ( $teacher_id > 0 ) {
             $subjects = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT DISTINCT s.id, s.subject_name, s.subject_code, s.total_marks, s.pass_marks, s.cq_marks, s.cq_pass, s.mcq_marks, s.mcq_pass, s.practical_marks, s.practical_pass 
+                    "SELECT DISTINCT s.id, s.subject_name, s.subject_code, s.subject_order, s.total_marks, s.pass_marks, s.cq_marks, s.cq_pass, s.mcq_marks, s.mcq_pass, s.practical_marks, s.practical_pass 
                      FROM `{$table_teacher_subjects}` ts
                      INNER JOIN `{$table_subjects}` s ON ts.subject_id = s.id 
                      INNER JOIN `{$table_units}` u ON ts.class_id = u.id 
                      WHERE ts.teacher_id = %d AND u.class_name = %s 
-                     ORDER BY s.subject_name ASC",
+                     ORDER BY s.subject_order ASC, s.subject_name ASC",
                     $teacher_id,
                     $class_name
                 )
@@ -243,11 +261,11 @@ function ifs_educore_get_subjects_for_marks_matrix_handler() {
 
     $subjects = $wpdb->get_results(
         $wpdb->prepare(
-            "SELECT DISTINCT s.id, s.subject_name, s.subject_code, s.total_marks, s.pass_marks, s.cq_marks, s.cq_pass, s.mcq_marks, s.mcq_pass, s.practical_marks, s.practical_pass 
+            "SELECT DISTINCT s.id, s.subject_name, s.subject_code, s.subject_order, s.total_marks, s.pass_marks, s.cq_marks, s.cq_pass, s.mcq_marks, s.mcq_pass, s.practical_marks, s.practical_pass 
              FROM `{$table_subjects}` s 
              INNER JOIN `{$table_units}` u ON s.class_id = u.id 
              WHERE u.class_name = %s 
-             ORDER BY s.subject_name ASC",
+             ORDER BY s.subject_order ASC, s.subject_name ASC",
             $class_name
         )
     );
@@ -333,10 +351,19 @@ function educore_exams_marks_view() {
     $filter_section = isset( $_REQUEST['section_name'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['section_name'] ) ) : '';
     $filter_subject = isset( $_REQUEST['subject_name'] ) ? sanitize_text_field( wp_unslash( $_REQUEST['subject_name'] ) ) : '';
 
+    // Fetch Class Sort Order Dictionary
+    $class_order_rows = $wpdb->get_results( "SELECT class_name, MIN(sort_order) as min_sort FROM `{$table_units}` GROUP BY class_name" );
+    $class_order_map  = array();
+    if ( ! empty( $class_order_rows ) ) {
+        foreach ( $class_order_rows as $cor ) {
+            $class_order_map[ $cor->class_name ] = (int) $cor->min_sort;
+        }
+    }
+
     // Resolve Teacher Allocations
     $teacher_assigned_classes = array();
     $teacher_assigned_subs    = array();
-    $teacher_id               = 0;
+    $teacher_id                = 0;
 
     if ( ! $is_admin ) {
         $teacher_id = (int) $wpdb->get_var(
@@ -355,7 +382,8 @@ function educore_exams_marks_view() {
                      FROM `{$table_teacher_subjects}` ts
                      INNER JOIN `{$table_units}` u ON ts.class_id = u.id 
                      INNER JOIN `{$table_subjects}` s ON ts.subject_id = s.id 
-                     WHERE ts.teacher_id = %d",
+                     WHERE ts.teacher_id = %d 
+                     ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, s.subject_order ASC",
                     $teacher_id
                 )
             );
@@ -490,7 +518,7 @@ function educore_exams_marks_view() {
     // Fetch Examinations
     $exams = $wpdb->get_results( "SELECT id, exam_name, class_name FROM `{$table_exams}` ORDER BY id DESC" );
 
-    // Fetch Classes ONLY assigned to the active selected Exam
+    // Fetch Classes ONLY assigned to the active selected Exam (Ordered by sort_order)
     $academic_classes = array();
     if ( $filter_exam > 0 ) {
         $exam_row = $wpdb->get_row( $wpdb->prepare( "SELECT class_name FROM `{$table_exams}` WHERE id = %d LIMIT 1", $filter_exam ) );
@@ -502,11 +530,19 @@ function educore_exams_marks_view() {
                 $academic_classes = $parsed_classes;
             }
             $academic_classes = array_values( array_unique( array_filter( $academic_classes ) ) );
-            natcasesort( $academic_classes );
+            
+            usort( $academic_classes, function( $a, $b ) use ( $class_order_map ) {
+                $order_a = isset( $class_order_map[ $a ] ) ? $class_order_map[ $a ] : 0;
+                $order_b = isset( $class_order_map[ $b ] ) ? $class_order_map[ $b ] : 0;
+                if ( $order_a !== $order_b ) {
+                    return $order_a - $order_b;
+                }
+                return strnatcasecmp( $a, $b );
+            } );
         }
     }
 
-    // Pre-populate Available Sections
+    // Pre-populate Available Sections (Ordered by sort_order)
     $available_sections = array();
     if ( ! empty( $filter_class ) ) {
         if ( ! $is_admin && $teacher_id > 0 ) {
@@ -516,7 +552,7 @@ function educore_exams_marks_view() {
                      FROM `{$table_teacher_subjects}` ts
                      INNER JOIN `{$table_units}` u ON ts.class_id = u.id 
                      WHERE ts.teacher_id = %d AND u.class_name = %s AND u.section_name != '' 
-                     ORDER BY u.section_name ASC",
+                     ORDER BY u.sort_order ASC, u.section_name ASC",
                     $teacher_id,
                     $filter_class
                 )
@@ -524,14 +560,14 @@ function educore_exams_marks_view() {
         } else {
             $available_sections = $wpdb->get_col(
                 $wpdb->prepare(
-                    "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY section_name ASC",
+                    "SELECT DISTINCT section_name FROM `{$table_units}` WHERE class_name = %s AND section_name != '' ORDER BY sort_order ASC, section_name ASC",
                     $filter_class
                 )
             );
         }
     }
 
-    // Fetch Mapped Subjects with Component Limits
+    // Fetch Mapped Subjects with Component Limits (Ordered by subject_order)
     $available_subjects = array();
     $active_subject_obj = null;
 
@@ -544,7 +580,7 @@ function educore_exams_marks_view() {
                      INNER JOIN `{$table_subjects}` s ON ts.subject_id = s.id 
                      INNER JOIN `{$table_units}` u ON ts.class_id = u.id 
                      WHERE ts.teacher_id = %d AND u.class_name = %s 
-                     ORDER BY s.subject_name ASC",
+                     ORDER BY s.subject_order ASC, s.subject_name ASC",
                     $teacher_id,
                     $filter_class
                 )
@@ -555,7 +591,7 @@ function educore_exams_marks_view() {
                     "SELECT DISTINCT s.* FROM `{$table_subjects}` s 
                      INNER JOIN `{$table_units}` u ON s.class_id = u.id 
                      WHERE u.class_name = %s 
-                     ORDER BY s.subject_name ASC",
+                     ORDER BY s.subject_order ASC, s.subject_name ASC",
                     $filter_class
                 )
             );
