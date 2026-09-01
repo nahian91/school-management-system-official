@@ -66,12 +66,39 @@ function educore_user_add_edit_view( $sub_mode, $all_staff_members, $table_staff
         }
     }
     ?>
+    <style>
+        .ifs-educore-password-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        .ifs-educore-password-wrapper input {
+            padding-right: 40px !important;
+        }
+        .ifs-educore-toggle-password {
+            position: absolute;
+            right: 10px;
+            background: none;
+            border: none;
+            color: #64748b;
+            cursor: pointer;
+            padding: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            outline: none;
+        }
+        .ifs-educore-toggle-password:hover {
+            color: #00523c;
+        }
+    </style>
+
     <div class="ifs-educore-bento-card">
         <h3 style="margin:0 0 20px 0; font-size:18px; font-weight:800; color:#0f172a; border-bottom:1px solid #f1f5f9; padding-bottom:14px;">
             <?php echo $edit_user ? esc_html__( 'Edit User Profile & Credentials', 'ifsedu-school-management' ) : esc_html__( 'Register New System User', 'ifsedu-school-management' ); ?>
         </h3>
 
-        <form method="POST" action="">
+        <form method="POST" action="" id="educoreUserForm">
             <?php wp_nonce_field( 'save_user_action', 'ifs_educore_user_nonce' ); ?>
             <input type="hidden" name="edit_user_id" value="<?php echo $edit_user ? esc_attr( $edit_user->ID ) : '0'; ?>">
 
@@ -116,16 +143,35 @@ function educore_user_add_edit_view( $sub_mode, $all_staff_members, $table_staff
                     <input type="text" name="last_name" id="educore_last_name" class="ifs-educore-input" value="<?php echo $edit_user ? esc_attr( $edit_user->last_name ) : ''; ?>" placeholder="<?php esc_attr_e( 'e.g. Ahmed', 'ifsedu-school-management' ); ?>">
                 </div>
 
-                <!-- Password -->
+                <!-- Password with Show/Hide Toggle -->
                 <div class="ifs-educore-field-group">
                     <label class="ifs-educore-field-label"><?php echo $edit_user ? esc_html__( 'New Password (Leave blank to keep unchanged)', 'ifsedu-school-management' ) : esc_html__( 'Password', 'ifsedu-school-management' ) . ' <span style="color:#ef4444;">*</span>'; ?></label>
-                    <input type="password" name="pass1" class="ifs-educore-input" <?php echo $edit_user ? '' : 'required'; ?> autocomplete="new-password">
+                    <div class="ifs-educore-password-wrapper">
+                        <input type="password" name="pass1" id="educore_pass1" class="ifs-educore-input" <?php echo $edit_user ? '' : 'required'; ?> autocomplete="new-password">
+                        <button type="button" class="ifs-educore-toggle-password" data-target="educore_pass1" title="<?php esc_attr_e( 'Toggle Password Visibility', 'ifsedu-school-management' ); ?>">
+                            <span class="dashicons dashicons-visibility"></span>
+                        </button>
+                    </div>
+                    
+                    <!-- Password Strength Meter Bar -->
+                    <div style="margin-top: 6px;">
+                        <div style="height: 6px; width: 100%; background: #e2e8f0; border-radius: 4px; overflow: hidden;">
+                            <div id="educorePasswordStrengthBar" style="height: 100%; width: 0%; transition: width 0.3s ease, background-color 0.3s ease;"></div>
+                        </div>
+                        <small id="educorePasswordStrengthText" style="display: block; margin-top: 4px; font-weight: 600; color: #64748b; font-size: 11.5px;"></small>
+                    </div>
                 </div>
 
-                <!-- Re-type Password -->
+                <!-- Re-type Password with Show/Hide Toggle -->
                 <div class="ifs-educore-field-group">
                     <label class="ifs-educore-field-label"><?php esc_html_e( 'Re-Type Password', 'ifsedu-school-management' ); ?> <?php echo $edit_user ? '' : '<span style="color:#ef4444;">*</span>'; ?></label>
-                    <input type="password" name="pass2" class="ifs-educore-input" <?php echo $edit_user ? '' : 'required'; ?> autocomplete="new-password">
+                    <div class="ifs-educore-password-wrapper">
+                        <input type="password" name="pass2" id="educore_pass2" class="ifs-educore-input" <?php echo $edit_user ? '' : 'required'; ?> autocomplete="new-password">
+                        <button type="button" class="ifs-educore-toggle-password" data-target="educore_pass2" title="<?php esc_attr_e( 'Toggle Password Visibility', 'ifsedu-school-management' ); ?>">
+                            <span class="dashicons dashicons-visibility"></span>
+                        </button>
+                    </div>
+                    <small id="educorePasswordMatchText" style="display: block; margin-top: 6px; font-weight: 600; font-size: 11.5px;"></small>
                 </div>
 
                 <!-- System Role Dropdown -->
@@ -138,12 +184,13 @@ function educore_user_add_edit_view( $sub_mode, $all_staff_members, $table_staff
                         <option value="teacher" <?php selected( $current_role, 'teacher' ); ?>>👨‍🏫 <?php esc_html_e( 'Teacher (Students, Attendance & Marks Matrix)', 'ifsedu-school-management' ); ?></option>
                         <option value="accountant" <?php selected( $current_role, 'accountant' ); ?>>💼 <?php esc_html_e( 'Accountant (Fees Collection & Accounting Ledger)', 'ifsedu-school-management' ); ?></option>
                         <option value="staff" <?php selected( $current_role, 'staff' ); ?>>👔 <?php esc_html_e( 'Office Staff / Officer (General Portal & Records)', 'ifsedu-school-management' ); ?></option>
+                        <option value="governing_body" <?php selected( $current_role, 'governing_body' ); ?>>🏛️ <?php esc_html_e( 'Governing Body (View-Only Access to All Modules)', 'ifsedu-school-management' ); ?></option>
                     </select>
                 </div>
             </div>
 
             <div style="margin-top:24px; text-align:right;">
-                <button type="submit" name="educore_save_user_btn" class="ifs-educore-btn-primary" style="height:44px; padding:0 32px;">
+                <button type="submit" name="educore_save_user_btn" id="educoreSubmitBtn" class="ifs-educore-btn-primary" style="height:44px; padding:0 32px;">
                     <span class="dashicons dashicons-saved"></span>
                     <?php echo $edit_user ? esc_html__( 'Update User Account', 'ifsedu-school-management' ) : esc_html__( 'Create User Account', 'ifsedu-school-management' ); ?>
                 </button>
@@ -151,7 +198,7 @@ function educore_user_add_edit_view( $sub_mode, $all_staff_members, $table_staff
         </form>
     </div>
 
-    <!-- Auto-Fill JS Engine -->
+    <!-- Auto-Fill, Password Strength & Toggle JS Engine -->
     <script type="text/javascript">
     document.addEventListener('DOMContentLoaded', function() {
         var staffMap = <?php echo wp_json_encode( ! empty( $staff_map_js ) ? $staff_map_js : array() ); ?>;
@@ -173,6 +220,114 @@ function educore_user_add_edit_view( $sub_mode, $all_staff_members, $table_staff
                     if (emailInput) emailInput.value = data.email;
                     if (loginInput && !loginInput.hasAttribute('readonly')) {
                         loginInput.value = data.username;
+                    }
+                }
+            });
+        }
+
+        // Show/Hide Password Visibility Toggle
+        document.querySelectorAll('.ifs-educore-toggle-password').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var targetId = this.getAttribute('data-target');
+                var inputField = document.getElementById(targetId);
+                var icon = this.querySelector('.dashicons');
+
+                if (inputField) {
+                    if (inputField.type === 'password') {
+                        inputField.type = 'text';
+                        icon.classList.remove('dashicons-visibility');
+                        icon.classList.add('dashicons-hidden');
+                    } else {
+                        inputField.type = 'password';
+                        icon.classList.remove('dashicons-hidden');
+                        icon.classList.add('dashicons-visibility');
+                    }
+                }
+            });
+        });
+
+        // Password Strength & Match Validation Engine
+        var pass1 = document.getElementById('educore_pass1');
+        var pass2 = document.getElementById('educore_pass2');
+        var strengthBar = document.getElementById('educorePasswordStrengthBar');
+        var strengthText = document.getElementById('educorePasswordStrengthText');
+        var matchText = document.getElementById('educorePasswordMatchText');
+        var form = document.getElementById('educoreUserForm');
+
+        function validatePassword() {
+            var p1 = pass1.value;
+            var p2 = pass2.value;
+
+            if (!p1 && pass1.hasAttribute('required') === false) {
+                strengthBar.style.width = '0%';
+                strengthText.textContent = '';
+                matchText.textContent = '';
+                return true;
+            }
+
+            // Strength Calculation
+            var score = 0;
+            if (p1.length >= 6) score++;
+            if (p1.length >= 10) score++;
+            if (/[A-Z]/.test(p1)) score++;
+            if (/[0-9]/.test(p1)) score++;
+            if (/[^A-Za-z0-9]/.test(p1)) score++;
+
+            var width = '0%';
+            var color = '#cbd5e1';
+            var msg = '';
+
+            if (p1.length > 0) {
+                if (score <= 2) {
+                    width = '33%';
+                    color = '#ef4444';
+                    msg = '<?php echo esc_js( __( 'Weak Password', 'ifsedu-school-management' ) ); ?>';
+                } else if (score <= 4) {
+                    width = '66%';
+                    color = '#f59e0b';
+                    msg = '<?php echo esc_js( __( 'Medium Strength Password', 'ifsedu-school-management' ) ); ?>';
+                } else {
+                    width = '100%';
+                    color = '#10b981';
+                    msg = '<?php echo esc_js( __( 'Strong Password', 'ifsedu-school-management' ) ); ?>';
+                }
+            }
+
+            strengthBar.style.width = width;
+            strengthBar.style.backgroundColor = color;
+            strengthText.textContent = msg;
+            strengthText.style.color = color;
+
+            // Match Check
+            if (p2.length > 0) {
+                if (p1 === p2) {
+                    matchText.textContent = '<?php echo esc_js( __( '✓ Passwords Match', 'ifsedu-school-management' ) ); ?>';
+                    matchText.style.color = '#10b981';
+                    return true;
+                } else {
+                    matchText.textContent = '<?php echo esc_js( __( '✕ Passwords Do Not Match', 'ifsedu-school-management' ) ); ?>';
+                    matchText.style.color = '#ef4444';
+                    return false;
+                }
+            } else {
+                matchText.textContent = '';
+                return p1 === '';
+            }
+        }
+
+        if (pass1 && pass2) {
+            pass1.addEventListener('input', validatePassword);
+            pass2.addEventListener('input', validatePassword);
+        }
+
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                var p1 = pass1.value;
+                var p2 = pass2.value;
+                if (p1 || p2) {
+                    if (p1 !== p2) {
+                        alert('<?php echo esc_js( __( 'Error: Passwords do not match.', 'ifsedu-school-management' ) ); ?>');
+                        e.preventDefault();
                     }
                 }
             });

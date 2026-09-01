@@ -1,6 +1,6 @@
 <?php
 /**
- * Enterprise Academic Admit Card Engine & Precision Print Compiler
+ * Enterprise Academic Admit Card Engine & Precision Print Compiler with Attendance Calculation
  * File: student-admit-card-view.php
  * Text Domain: ifsedu-school-management
  */
@@ -88,13 +88,14 @@ function educore_student_admit_card_view() {
     }
 
     global $wpdb;
-    $table_students = $wpdb->prefix . 'sms_students';
-    $table_units    = $wpdb->prefix . 'sms_academic_units';
-    $table_exams    = $wpdb->prefix . 'sms_exams';
+    $table_students   = $wpdb->prefix . 'sms_students';
+    $table_units      = $wpdb->prefix . 'sms_academic_units';
+    $table_exams      = $wpdb->prefix . 'sms_exams';
+    $table_attendance = $wpdb->prefix . 'sms_attendance';
 
     // Fetch Exams & Unique Classes (Ordered by sort_order)
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
-    $exams = $wpdb->get_results( "SELECT id, exam_name FROM `{$table_exams}` ORDER BY id DESC" );
+    $exams = $wpdb->get_results( "SELECT id, exam_name, start_date, end_date, att_start_date, att_end_date FROM `{$table_exams}` ORDER BY id DESC" );
     
     $raw_classes_data = $wpdb->get_results( 
         "SELECT class_name, MIN(sort_order) as min_sort 
@@ -157,20 +158,53 @@ function educore_student_admit_card_view() {
 
     $students   = array();
     $exam_title = '';
+    $exam_att_start = '';
+    $exam_att_end   = '';
 
-    // Resolve Exam Name
+    // Resolve Exam Details & Attendance Calculation Range
     if ( $selected_exam_id > 0 ) {
         // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
         $exam_row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT exam_name FROM `{$table_exams}` WHERE id = %d LIMIT 1",
+                "SELECT * FROM `{$table_exams}` WHERE id = %d LIMIT 1",
                 $selected_exam_id
             )
         );
         // phpcs:enable
         if ( $exam_row ) {
-            $exam_title = $exam_row->exam_name;
+            $exam_title     = $exam_row->exam_name;
+            $exam_att_start = ! empty( $exam_row->att_start_date ) ? $exam_row->att_start_date : ( ! empty( $exam_row->start_date ) ? $exam_row->start_date : gmdate( 'Y-01-01' ) );
+            $exam_att_end   = ! empty( $exam_row->att_end_date ) ? $exam_row->att_end_date : ( ! empty( $exam_row->end_date ) ? $exam_row->end_date : current_time( 'Y-m-d' ) );
         }
+    }
+
+    // --------------------------------------------------------------------------
+    // Calculate Working Days & Attendance Ratio
+    // --------------------------------------------------------------------------
+    $cal_year_num = intval( substr( $exam_att_start, 0, 4 ) );
+    if ( $cal_year_num < 2000 ) {
+        $cal_year_num = intval( $exam_year );
+    }
+
+    $saved_off_days_map = get_option( 'educore_academic_off_dates_' . $cal_year_num, array() );
+    $attendance_threshold = absint( get_option( 'educore_attendance_threshold', 75 ) );
+
+    // Count Net Working Days in the Range
+    $total_working_days = 0;
+    if ( ! empty( $exam_att_start ) && ! empty( $exam_att_end ) ) {
+        $curr_ts = strtotime( $exam_att_start );
+        $end_ts  = strtotime( $exam_att_end );
+
+        while ( $curr_ts <= $end_ts ) {
+            $d_str = date( 'Y-m-d', $curr_ts );
+            if ( ! isset( $saved_off_days_map[ $d_str ] ) ) {
+                $total_working_days++;
+            }
+            $curr_ts = strtotime( '+1 day', $curr_ts );
+        }
+    }
+    if ( $total_working_days <= 0 ) {
+        $total_working_days = 1; // Prevent division by zero
     }
 
     // Target fields for admit cards
@@ -214,6 +248,33 @@ function educore_student_admit_card_view() {
         }
     }
     // phpcs:enable
+
+    // Pull Dynamic Attendance Counts for selected students within the range
+    $attendance_present_counts = array();
+    if ( ! empty( $students ) && ! empty( $exam_att_start ) && ! empty( $exam_att_end ) ) {
+        $student_ids_list = array_map( 'absint', wp_list_pluck( $students, 'id' ) );
+        $ids_placeholder  = implode( ',', array_fill( 0, count( $student_ids_list ), '%d' ) );
+
+        // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        $att_results = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT student_id, COUNT(id) as present_days 
+                 FROM `{$table_attendance}` 
+                 WHERE student_id IN ($ids_placeholder) 
+                   AND (status = 'Present' OR status = 'Late') 
+                   AND attendance_date BETWEEN %s AND %s 
+                 GROUP BY student_id",
+                ...array_merge( $student_ids_list, array( $exam_att_start, $exam_att_end ) )
+            )
+        );
+        // phpcs:enable
+
+        if ( ! empty( $att_results ) ) {
+            foreach ( $att_results as $ar ) {
+                $attendance_present_counts[ $ar->student_id ] = absint( $ar->present_days );
+            }
+        }
+    }
 
     // Pull Dynamic Institutional Settings
     $school_name    = get_option( 'educore_school_name', get_bloginfo( 'name' ) );
@@ -366,7 +427,7 @@ function educore_student_admit_card_view() {
     .ifs-educore-admit-table .label-col {
         font-weight: 700;
         color: #64748b;
-        width: 32%;
+        width: 34%;
     }
 
     .ifs-educore-admit-table .value-col {
@@ -563,6 +624,11 @@ function educore_student_admit_card_view() {
                     <div class="ifs-educore-admit-cards-container">
                         <?php foreach ( $students as $student ) : 
                             $card_id = 'admit_card_' . $student->id;
+
+                            // Calculate Student Attendance Percentage for this Exam Range
+                            $student_present_days = isset( $attendance_present_counts[ $student->id ] ) ? $attendance_present_counts[ $student->id ] : 0;
+                            $att_percentage       = round( ( $student_present_days / $total_working_days ) * 100, 1 );
+                            $is_eligible          = $att_percentage >= $attendance_threshold;
                         ?>
                             <div class="ifs-educore-admit-card-wrapper" id="<?php echo esc_attr( $card_id ); ?>">
                                 
@@ -626,6 +692,17 @@ function educore_student_admit_card_view() {
                                                         <span style="background: #0f172a; color:#ffffff; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 800;">
                                                             #<?php echo esc_html( $student->roll_no ); ?>
                                                         </span>
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td class="label-col"><?php esc_html_e( 'Term Attendance:', 'ifsedu-school-management' ); ?></td>
+                                                    <td class="value-col">
+                                                        <span style="font-weight:800; color:<?php echo $is_eligible ? '#047857' : '#dc2626'; ?>;">
+                                                            <?php echo esc_html( $att_percentage ); ?>%
+                                                        </span>
+                                                        <small style="color:#64748b; font-size:11px; font-weight:600;">
+                                                            (<?php echo intval( $student_present_days ); ?>/<?php echo intval( $total_working_days ); ?> <?php esc_html_e( 'Days', 'ifsedu-school-management' ); ?>)
+                                                        </small>
                                                     </td>
                                                 </tr>
                                                 <tr>

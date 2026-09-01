@@ -19,6 +19,9 @@ if ( file_exists( $educore_acct_dir . 'accounting-list.php' ) ) {
 if ( file_exists( $educore_acct_dir . 'accounting-add.php' ) ) {
     require_once $educore_acct_dir . 'accounting-add.php';
 }
+if ( file_exists( $educore_acct_dir . 'accounting-view.php' ) ) {
+    require_once $educore_acct_dir . 'accounting-view.php';
+}
 if ( file_exists( $educore_acct_dir . 'accounting-delete.php' ) ) {
     require_once $educore_acct_dir . 'accounting-delete.php';
 }
@@ -59,7 +62,7 @@ function educore_accounting_tab() {
         wp_die( esc_html__( 'You do not have sufficient permissions to manage financial ledger records.', 'ifsedu-school-management' ) );
     }
 
-    $allowed_sub_tabs = array( 'list', 'add', 'edit', 'delete' );
+    $allowed_sub_tabs = array( 'list', 'add', 'edit', 'view', 'delete' );
 
     // phpcs:disable WordPress.Security.NonceVerification.Recommended
     $raw_sub_tab = isset( $_GET['sub'] ) ? sanitize_key( wp_unslash( $_GET['sub'] ) ) : 'list';
@@ -90,6 +93,12 @@ function educore_accounting_tab() {
             </div>
 
             <div>
+                <?php if ( 'view' === $sub_tab ) : ?>
+                    <span style="background:#f0fdf4; color:#047857; font-size:12px; font-weight:700; padding:5px 12px; border-radius:20px; border:1px solid #bbf7d0; margin-right:10px;">
+                        <?php esc_html_e( 'Viewing Voucher Details', 'ifsedu-school-management' ); ?>
+                    </span>
+                <?php endif; ?>
+
                 <?php if ( ! $is_admin ) : ?>
                     <span class="ifs-educore-assigned-context-pill">
                         <span class="dashicons dashicons-businessman" style="font-size:14px; width:14px; height:14px;"></span>
@@ -103,6 +112,14 @@ function educore_accounting_tab() {
         <div class="ifs-educore-module-viewport-container">
             <?php
             switch ( $sub_tab ) {
+                case 'view':
+                    if ( function_exists( 'educore_accounting_single_view' ) ) {
+                        educore_accounting_single_view();
+                    } else {
+                        echo '<div class="ifs-educore-notice-card">' . esc_html__( 'Voucher Details View initializing.', 'ifsedu-school-management' ) . '</div>';
+                    }
+                    break;
+
                 case 'add':
                 case 'edit':
                     if ( function_exists( 'educore_accounting_add_edit_view' ) ) {

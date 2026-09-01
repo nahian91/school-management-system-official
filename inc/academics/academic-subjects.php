@@ -1,6 +1,6 @@
 <?php
 /**
- * Academic Subjects Management & Mark Distribution Engine
+ * Academic Subjects Management & Mark Distribution Engine with Dynamic Breakdown Repeater
  * File: inc/academics/class-subjects.php
  * Text Domain: ifsedu-school-management
  */
@@ -34,19 +34,53 @@ function educore_render_subjects_view() {
 
     if ( 'POST' === $req_method && isset( $_POST['educore_update_single_subject'] ) ) {
         if ( isset( $_POST['edit_subject_nonce_field'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['edit_subject_nonce_field'] ) ), 'ifs_educore_edit_subject_nonce' ) ) {
-            $sub_id      = isset( $_POST['subject_id'] ) ? absint( wp_unslash( $_POST['subject_id'] ) ) : 0;
-            $unit_keys   = ( isset( $_POST['class_units'] ) && is_array( $_POST['class_units'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['class_units'] ) ) : array();
-            $sub_name    = isset( $_POST['subject_name'] ) ? sanitize_text_field( wp_unslash( $_POST['subject_name'] ) ) : '';
-            $sub_code    = isset( $_POST['subject_code'] ) ? sanitize_text_field( wp_unslash( $_POST['subject_code'] ) ) : '';
-            $sub_order   = isset( $_POST['subject_order'] ) ? intval( wp_unslash( $_POST['subject_order'] ) ) : 0;
-            $tot_m       = isset( $_POST['total_marks'] ) ? floatval( wp_unslash( $_POST['total_marks'] ) ) : 100.00;
-            $pass_m      = isset( $_POST['pass_marks'] ) ? floatval( wp_unslash( $_POST['pass_marks'] ) ) : 33.00;
-            $cq_m        = isset( $_POST['cq_marks'] ) ? floatval( wp_unslash( $_POST['cq_marks'] ) ) : 0.00;
-            $cq_p        = isset( $_POST['cq_pass'] ) ? floatval( wp_unslash( $_POST['cq_pass'] ) ) : 0.00;
-            $mcq_m       = isset( $_POST['mcq_marks'] ) ? floatval( wp_unslash( $_POST['mcq_marks'] ) ) : 0.00;
-            $mcq_p       = isset( $_POST['mcq_pass'] ) ? floatval( wp_unslash( $_POST['mcq_pass'] ) ) : 0.00;
-            $pr_m        = isset( $_POST['practical_marks'] ) ? floatval( wp_unslash( $_POST['practical_marks'] ) ) : 0.00;
-            $pr_p        = isset( $_POST['practical_pass'] ) ? floatval( wp_unslash( $_POST['practical_pass'] ) ) : 0.00;
+            $sub_id         = isset( $_POST['subject_id'] ) ? absint( wp_unslash( $_POST['subject_id'] ) ) : 0;
+            $unit_keys      = ( isset( $_POST['class_units'] ) && is_array( $_POST['class_units'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['class_units'] ) ) : array();
+            $sub_name       = isset( $_POST['subject_name'] ) ? sanitize_text_field( wp_unslash( $_POST['subject_name'] ) ) : '';
+            $sub_code       = isset( $_POST['subject_code'] ) ? sanitize_text_field( wp_unslash( $_POST['subject_code'] ) ) : '';
+            $sub_order      = isset( $_POST['subject_order'] ) ? intval( wp_unslash( $_POST['subject_order'] ) ) : 0;
+            $tot_m          = isset( $_POST['total_marks'] ) ? floatval( wp_unslash( $_POST['total_marks'] ) ) : 100.00;
+            $pass_m         = isset( $_POST['pass_marks'] ) ? floatval( wp_unslash( $_POST['pass_marks'] ) ) : 33.00;
+            $cq_m           = isset( $_POST['cq_marks'] ) ? floatval( wp_unslash( $_POST['cq_marks'] ) ) : 0.00;
+            $cq_p           = isset( $_POST['cq_pass'] ) ? floatval( wp_unslash( $_POST['cq_pass'] ) ) : 0.00;
+            $mcq_m          = isset( $_POST['mcq_marks'] ) ? floatval( wp_unslash( $_POST['mcq_marks'] ) ) : 0.00;
+            $mcq_p          = isset( $_POST['mcq_pass'] ) ? floatval( wp_unslash( $_POST['mcq_pass'] ) ) : 0.00;
+            $pr_m           = isset( $_POST['practical_marks'] ) ? floatval( wp_unslash( $_POST['practical_marks'] ) ) : 0.00;
+            $pr_p           = isset( $_POST['practical_pass'] ) ? floatval( wp_unslash( $_POST['practical_pass'] ) ) : 0.00;
+            $preset_type    = isset( $_POST['preset_type'] ) ? sanitize_text_field( wp_unslash( $_POST['preset_type'] ) ) : 'gen_100';
+
+            // Collect Custom Breakdown if preset is 'other'
+            $breakdown_json = null;
+            if ( 'other' === $preset_type && isset( $_POST['sub_comp_name'] ) && is_array( $_POST['sub_comp_name'] ) ) {
+                $components = array();
+                $names      = array_map( 'sanitize_text_field', wp_unslash( $_POST['sub_comp_name'] ) );
+                $totals     = isset( $_POST['sub_comp_total'] ) && is_array( $_POST['sub_comp_total'] ) ? array_map( 'floatval', wp_unslash( $_POST['sub_comp_total'] ) ) : array();
+                $passes     = isset( $_POST['sub_comp_pass'] ) && is_array( $_POST['sub_comp_pass'] ) ? array_map( 'floatval', wp_unslash( $_POST['sub_comp_pass'] ) ) : array();
+
+                foreach ( $names as $idx => $comp_name ) {
+                    if ( empty( $comp_name ) ) {
+                        continue;
+                    }
+                    $c_max = isset( $totals[ $idx ] ) ? $totals[ $idx ] : 0;
+                    $c_pas = isset( $passes[ $idx ] ) ? $passes[ $idx ] : 0;
+
+                    $components[] = array(
+                        'name'  => $comp_name,
+                        'total' => $c_max,
+                        'pass'  => $c_pas,
+                    );
+                }
+
+                if ( ! empty( $components ) ) {
+                    $breakdown_json = wp_json_encode( $components );
+                    $cq_m           = 0.00;
+                    $cq_p           = 0.00;
+                    $mcq_m          = 0.00;
+                    $mcq_p          = 0.00;
+                    $pr_m           = 0.00;
+                    $pr_p           = 0.00;
+                }
+            }
 
             if ( $sub_id > 0 && ! empty( $unit_keys ) && ! empty( $sub_name ) ) {
                 $target_unit_ids = array();
@@ -66,24 +100,27 @@ function educore_render_subjects_view() {
                 if ( ! empty( $target_unit_ids ) ) {
                     $primary_unit_id = $target_unit_ids[0];
 
+                    $update_data = array(
+                        'class_id'        => $primary_unit_id,
+                        'subject_name'    => $sub_name,
+                        'subject_code'    => $sub_code,
+                        'subject_order'   => $sub_order,
+                        'total_marks'     => $tot_m,
+                        'pass_marks'      => $pass_m,
+                        'cq_marks'        => $cq_m,
+                        'cq_pass'         => $cq_p,
+                        'mcq_marks'       => $mcq_m,
+                        'mcq_pass'        => $mcq_p,
+                        'practical_marks' => $pr_m,
+                        'practical_pass'  => $pr_p,
+                        'breakdown_data'  => $breakdown_json,
+                    );
+
                     $wpdb->update(
                         $table_subjects,
-                        array(
-                            'class_id'        => $primary_unit_id,
-                            'subject_name'    => $sub_name,
-                            'subject_code'    => $sub_code,
-                            'subject_order'   => $sub_order,
-                            'total_marks'     => $tot_m,
-                            'pass_marks'      => $pass_m,
-                            'cq_marks'        => $cq_m,
-                            'cq_pass'         => $cq_p,
-                            'mcq_marks'       => $mcq_m,
-                            'mcq_pass'        => $mcq_p,
-                            'practical_marks' => $pr_m,
-                            'practical_pass'  => $pr_p,
-                        ),
+                        $update_data,
                         array( 'id' => $sub_id ),
-                        array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f' ),
+                        array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%s' ),
                         array( '%d' )
                     );
 
@@ -92,23 +129,12 @@ function educore_render_subjects_view() {
                         $exists_id = (int) $wpdb->get_var( $wpdb->prepare( "SELECT id FROM `{$table_subjects}` WHERE class_id = %d AND subject_name = %s LIMIT 1", $other_unit_id, $sub_name ) );
 
                         if ( ! $exists_id ) {
+                            $insert_data             = $update_data;
+                            $insert_data['class_id'] = $other_unit_id;
                             $wpdb->insert(
                                 $table_subjects,
-                                array(
-                                    'class_id'        => $other_unit_id,
-                                    'subject_name'    => $sub_name,
-                                    'subject_code'    => $sub_code,
-                                    'subject_order'   => $sub_order,
-                                    'total_marks'     => $tot_m,
-                                    'pass_marks'      => $pass_m,
-                                    'cq_marks'        => $cq_m,
-                                    'cq_pass'         => $cq_p,
-                                    'mcq_marks'       => $mcq_m,
-                                    'mcq_pass'        => $mcq_p,
-                                    'practical_marks' => $pr_m,
-                                    'practical_pass'  => $pr_p,
-                                ),
-                                array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f' )
+                                $insert_data,
+                                array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%s' )
                             );
                         }
                     }
@@ -127,7 +153,7 @@ function educore_render_subjects_view() {
     }
 
     // --------------------------------------------------------------------------
-    // 2. REPEATER SUBMISSION (BULK ASSIGN)
+    // 2. REPEATER SUBMISSION (BULK ASSIGN WITH CUSTOM BREAKDOWN)
     // --------------------------------------------------------------------------
     if ( 'POST' === $req_method && isset( $_POST['save_subjects_repeater'] ) ) {
         if ( isset( $_POST['subject_setup_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['subject_setup_nonce'] ) ), 'subject_setup_action' ) ) {
@@ -135,6 +161,7 @@ function educore_render_subjects_view() {
             $subject_name    = ( isset( $_POST['subject_name'] ) && is_array( $_POST['subject_name'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['subject_name'] ) ) : array();
             $subject_code    = ( isset( $_POST['subject_code'] ) && is_array( $_POST['subject_code'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['subject_code'] ) ) : array();
             $subject_order   = ( isset( $_POST['subject_order'] ) && is_array( $_POST['subject_order'] ) ) ? array_map( 'intval', wp_unslash( $_POST['subject_order'] ) ) : array();
+            $preset_types    = ( isset( $_POST['distribution_preset'] ) && is_array( $_POST['distribution_preset'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['distribution_preset'] ) ) : array();
             $total_marks     = ( isset( $_POST['total_marks'] ) && is_array( $_POST['total_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['total_marks'] ) ) : array();
             $pass_marks      = ( isset( $_POST['pass_marks'] ) && is_array( $_POST['pass_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['pass_marks'] ) ) : array();
             $cq_marks        = ( isset( $_POST['cq_marks'] ) && is_array( $_POST['cq_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['cq_marks'] ) ) : array();
@@ -143,6 +170,10 @@ function educore_render_subjects_view() {
             $mcq_pass        = ( isset( $_POST['mcq_pass'] ) && is_array( $_POST['mcq_pass'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['mcq_pass'] ) ) : array();
             $practical_marks = ( isset( $_POST['practical_marks'] ) && is_array( $_POST['practical_marks'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['practical_marks'] ) ) : array();
             $practical_pass  = ( isset( $_POST['practical_pass'] ) && is_array( $_POST['practical_pass'] ) ) ? array_map( 'floatval', wp_unslash( $_POST['practical_pass'] ) ) : array();
+
+            $raw_custom_names  = isset( $_POST['sub_comp_name'] ) && is_array( $_POST['sub_comp_name'] ) ? wp_unslash( $_POST['sub_comp_name'] ) : array();
+            $raw_custom_totals = isset( $_POST['sub_comp_total'] ) && is_array( $_POST['sub_comp_total'] ) ? wp_unslash( $_POST['sub_comp_total'] ) : array();
+            $raw_custom_passes = isset( $_POST['sub_comp_pass'] ) && is_array( $_POST['sub_comp_pass'] ) ? wp_unslash( $_POST['sub_comp_pass'] ) : array();
 
             if ( ! empty( $unit_keys ) && ! empty( $subject_name ) ) {
                 $target_unit_ids = array();
@@ -173,16 +204,47 @@ function educore_render_subjects_view() {
                                 continue;
                             }
 
-                            $s_code      = isset( $subject_code[ $index ] ) ? sanitize_text_field( (string) $subject_code[ $index ] ) : '';
-                            $s_order     = isset( $subject_order[ $index ] ) ? intval( $subject_order[ $index ] ) : ( $index + 1 );
-                            $s_total     = ( isset( $total_marks[ $index ] ) && floatval( $total_marks[ $index ] ) > 0 ) ? floatval( $total_marks[ $index ] ) : 100.00;
-                            $s_pass      = isset( $pass_marks[ $index ] ) ? floatval( $pass_marks[ $index ] ) : 33.00;
-                            $s_cq        = isset( $cq_marks[ $index ] ) ? floatval( $cq_marks[ $index ] ) : 70.00;
-                            $s_cq_p      = isset( $cq_pass[ $index ] ) ? floatval( $cq_pass[ $index ] ) : 23.00;
-                            $s_mcq       = isset( $mcq_marks[ $index ] ) ? floatval( $mcq_marks[ $index ] ) : 30.00;
-                            $s_mcq_p     = isset( $mcq_pass[ $index ] ) ? floatval( $mcq_pass[ $index ] ) : 10.00;
-                            $s_practical = isset( $practical_marks[ $index ] ) ? floatval( $practical_marks[ $index ] ) : 0.00;
-                            $s_pr_p      = isset( $practical_pass[ $index ] ) ? floatval( $practical_pass[ $index ] ) : 0.00;
+                            $s_code       = isset( $subject_code[ $index ] ) ? sanitize_text_field( (string) $subject_code[ $index ] ) : '';
+                            $s_order      = isset( $subject_order[ $index ] ) ? intval( $subject_order[ $index ] ) : ( $index + 1 );
+                            $s_preset     = isset( $preset_types[ $index ] ) ? sanitize_text_field( $preset_types[ $index ] ) : 'gen_100';
+                            $s_total      = ( isset( $total_marks[ $index ] ) && floatval( $total_marks[ $index ] ) > 0 ) ? floatval( $total_marks[ $index ] ) : 100.00;
+                            $s_pass       = isset( $pass_marks[ $index ] ) ? floatval( $pass_marks[ $index ] ) : 33.00;
+                            $s_cq         = isset( $cq_marks[ $index ] ) ? floatval( $cq_marks[ $index ] ) : 0.00;
+                            $s_cq_p       = isset( $cq_pass[ $index ] ) ? floatval( $cq_pass[ $index ] ) : 0.00;
+                            $s_mcq        = isset( $mcq_marks[ $index ] ) ? floatval( $mcq_marks[ $index ] ) : 0.00;
+                            $s_mcq_p      = isset( $mcq_pass[ $index ] ) ? floatval( $mcq_pass[ $index ] ) : 0.00;
+                            $s_practical  = isset( $practical_marks[ $index ] ) ? floatval( $practical_marks[ $index ] ) : 0.00;
+                            $s_pr_p       = isset( $practical_pass[ $index ] ) ? floatval( $practical_pass[ $index ] ) : 0.00;
+                            $s_breakdown  = null;
+
+                            // If custom breakdown selected, build json
+                            if ( 'other' === $s_preset && isset( $raw_custom_names[ $index ] ) && is_array( $raw_custom_names[ $index ] ) ) {
+                                $c_list = array();
+                                foreach ( $raw_custom_names[ $index ] as $c_idx => $c_n ) {
+                                    $c_n_clean = sanitize_text_field( $c_n );
+                                    if ( empty( $c_n_clean ) ) {
+                                        continue;
+                                    }
+                                    $c_t = isset( $raw_custom_totals[ $index ][ $c_idx ] ) ? floatval( $raw_custom_totals[ $index ][ $c_idx ] ) : 0;
+                                    $c_p = isset( $raw_custom_passes[ $index ][ $c_idx ] ) ? floatval( $raw_custom_passes[ $index ][ $c_idx ] ) : 0;
+
+                                    $c_list[] = array(
+                                        'name'  => $c_n_clean,
+                                        'total' => $c_t,
+                                        'pass'  => $c_p,
+                                    );
+                                }
+
+                                if ( ! empty( $c_list ) ) {
+                                    $s_breakdown = wp_json_encode( $c_list );
+                                    $s_cq        = 0.00;
+                                    $s_cq_p      = 0.00;
+                                    $s_mcq       = 0.00;
+                                    $s_mcq_p     = 0.00;
+                                    $s_practical = 0.00;
+                                    $s_pr_p      = 0.00;
+                                }
+                            }
 
                             $wpdb->insert( 
                                 $table_subjects, 
@@ -199,8 +261,9 @@ function educore_render_subjects_view() {
                                     'mcq_pass'        => $s_mcq_p, 
                                     'practical_marks' => $s_practical, 
                                     'practical_pass'  => $s_pr_p, 
+                                    'breakdown_data'  => $s_breakdown,
                                 ), 
-                                array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f' ) 
+                                array( '%d', '%s', '%s', '%d', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%f', '%s' ) 
                             );
                             $inserted_count++;
                         }
@@ -262,11 +325,9 @@ function educore_render_subjects_view() {
             $u_id       = absint( $unit['id'] );
             $sort_order = isset( $unit['sort_order'] ) ? (int) $unit['sort_order'] : 0;
 
-            // Extract numeric class number (e.g., '10' from 'Class 10')
             preg_match( '/\d+/', $c_name, $matches );
             $c_num = ! empty( $matches ) ? intval( $matches[0] ) : 0;
 
-            // Classes 9, 10, 11, 12 show section/department specifically
             if ( in_array( $c_num, array( 9, 10, 11, 12 ), true ) ) {
                 $label = $c_name . ( '' !== $s_name ? ' (' . $s_name . ')' : '' );
                 $display_units[] = array(
@@ -277,7 +338,6 @@ function educore_render_subjects_view() {
                     'sort_order'   => $sort_order,
                 );
             } else {
-                // Classes 1-8 show ONLY the Class Name (combined)
                 if ( ! in_array( $c_name, $processed_classes, true ) ) {
                     $display_units[] = array(
                         'key'          => 'class:' . $c_name,
@@ -291,7 +351,6 @@ function educore_render_subjects_view() {
             }
         }
 
-        // Sort display units primarily by sort_order, then naturally by name
         usort( $display_units, function( $a, $b ) {
             $order_a = isset( $a['sort_order'] ) ? (int) $a['sort_order'] : 0;
             $order_b = isset( $b['sort_order'] ) ? (int) $b['sort_order'] : 0;
@@ -384,7 +443,7 @@ function educore_render_subjects_view() {
         }
         .ifs-educore-form-label {
             display: block;
-            font-size: 12.5px;
+            font-size: 12px;
             font-weight: 700;
             color: #334155;
             text-transform: uppercase;
@@ -394,11 +453,11 @@ function educore_render_subjects_view() {
         .ifs-educore-field-input,
         .ifs-educore-field-select {
             width: 100%;
-            height: 40px;
-            padding: 0 12px;
+            height: 38px;
+            padding: 0 10px;
             border: 1.5px solid #cbd5e1;
             border-radius: 8px;
-            font-size: 13.5px;
+            font-size: 13px;
             color: #0f172a;
             background: #ffffff;
             box-sizing: border-box;
@@ -529,22 +588,56 @@ function educore_render_subjects_view() {
         }
         .ifs-educore-repeater-grid-top {
             display: grid;
-            grid-template-columns: 2fr 1fr 1fr 1.5fr 36px;
+            grid-template-columns: 2fr 1fr 1fr 1.6fr 36px;
             gap: 10px;
             align-items: end;
             margin-bottom: 10px;
         }
         .ifs-educore-repeater-grid-marks {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
             gap: 10px;
             background: #ffffff;
             padding: 12px;
             border-radius: 8px;
             border: 1px solid #e2e8f0;
         }
+
+        /* Custom Breakdown Sub-Repeater inside Row */
+        .ifs-custom-breakdown-subrepeater {
+            display: none;
+            background: #ffffff;
+            border: 1.5px solid #00523c;
+            border-radius: 8px;
+            padding: 12px;
+            margin-top: 10px;
+        }
+        .ifs-custom-breakdown-subrepeater.is-active {
+            display: block;
+        }
+        .ifs-sub-item-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 32px;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .ifs-btn-del-subitem {
+            background: #fee2e2;
+            color: #dc2626;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            height: 32px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
         .ifs-educore-btn-remove-row {
-            height: 40px;
+            height: 38px;
             width: 36px;
             background: #fee2e2;
             color: #dc2626;
@@ -751,7 +844,7 @@ function educore_render_subjects_view() {
                 </div>
 
                 <div id="ifs-educore-subject-repeater-canvas" class="ifs-educore-repeater-canvas">
-                    <div class="ifs-educore-repeater-row">
+                    <div class="ifs-educore-repeater-row" data-row-index="0">
                         <!-- Row Top -->
                         <div class="ifs-educore-repeater-grid-top">
                             <div>
@@ -768,11 +861,12 @@ function educore_render_subjects_view() {
                             </div>
                             <div>
                                 <label class="ifs-educore-form-label"><?php esc_html_e( 'Distribution Preset', 'ifsedu-school-management' ); ?></label>
-                                <select class="ifs-educore-field-select preset-selector">
+                                <select name="distribution_preset[]" class="ifs-educore-field-select preset-selector">
                                     <option value="gen_100">General (70/30)</option>
                                     <option value="sci_100">Science (50/25/25)</option>
                                     <option value="lang_100">Language (100 CQ)</option>
                                     <option value="jun_50">Junior Tier (35/15)</option>
+                                    <option value="other"><?php esc_html_e( 'Other (Custom Breakdown)', 'ifsedu-school-management' ); ?></option>
                                 </select>
                             </div>
                             <div>
@@ -782,7 +876,7 @@ function educore_render_subjects_view() {
                             </div>
                         </div>
 
-                        <!-- Row Marks -->
+                        <!-- Standard Fixed Breakdown Grid (Auto hidden when Other is chosen) -->
                         <div class="ifs-educore-repeater-grid-marks">
                             <div>
                                 <label class="ifs-educore-form-label"><?php esc_html_e( 'Total / Pass', 'ifsedu-school-management' ); ?></label>
@@ -813,6 +907,43 @@ function educore_render_subjects_view() {
                                 <div style="display:flex; gap:6px;">
                                     <input type="number" step="0.5" name="practical_marks[]" class="ifs-educore-field-input f-pr" value="0">
                                     <input type="number" step="0.5" name="practical_pass[]" class="ifs-educore-field-input f-pr-pass" value="0">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Custom Breakdown Dynamic Repeater (Shown ONLY when 'other' is selected) -->
+                        <div class="ifs-custom-breakdown-subrepeater">
+                            <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:12px; align-items:end; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #e2e8f0;">
+                                <div>
+                                    <label class="ifs-educore-form-label" style="color:#00523c;"><?php esc_html_e( 'Subject Total Marks', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                                    <input type="number" step="0.5" class="ifs-educore-field-input custom-main-total" value="100" placeholder="e.g. 100" required>
+                                </div>
+                                <div>
+                                    <label class="ifs-educore-form-label" style="color:#00523c;"><?php esc_html_e( 'Subject Overall Pass Marks', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                                    <input type="number" step="0.5" class="ifs-educore-field-input custom-main-pass" value="33" placeholder="e.g. 33" required>
+                                </div>
+                                <div>
+                                    <button type="button" class="ifs-btn-add-subitem" style="background:#00523c; color:#fff; border:none; padding:8px 12px; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; height:38px;">+ Add Component</button>
+                                </div>
+                            </div>
+
+                            <div style="margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                                <small style="font-size:11.5px; font-weight:700; color:#475569; text-transform:uppercase;"><?php esc_html_e( 'Component Breakdown Items', 'ifsedu-school-management' ); ?></small>
+                                <small style="font-size:11.5px; color:#64748b;" class="custom-sum-indicator">(Sum of items: Total 100 | Pass 33)</small>
+                            </div>
+
+                            <div class="ifs-subitems-container">
+                                <div class="ifs-sub-item-row">
+                                    <input type="text" name="sub_comp_name[0][]" class="ifs-educore-field-input sub-comp-name" placeholder="Component Name (e.g. Written Exam / Assignment)" style="height:34px; font-size:12.5px;" value="Written Examination">
+                                    <input type="number" step="0.5" name="sub_comp_total[0][]" class="ifs-educore-field-input sub-comp-total" placeholder="Max Marks" style="height:34px; font-size:12.5px;" value="60">
+                                    <input type="number" step="0.5" name="sub_comp_pass[0][]" class="ifs-educore-field-input sub-comp-pass" placeholder="Pass Marks" style="height:34px; font-size:12.5px;" value="20">
+                                    <button type="button" class="ifs-btn-del-subitem" title="Remove Component">&times;</button>
+                                </div>
+                                <div class="ifs-sub-item-row">
+                                    <input type="text" name="sub_comp_name[0][]" class="ifs-educore-field-input sub-comp-name" placeholder="Component Name (e.g. Class Test / Viva)" style="height:34px; font-size:12.5px;" value="Attendance & Assignment">
+                                    <input type="number" step="0.5" name="sub_comp_total[0][]" class="ifs-educore-field-input sub-comp-total" placeholder="Max Marks" style="height:34px; font-size:12.5px;" value="40">
+                                    <input type="number" step="0.5" name="sub_comp_pass[0][]" class="ifs-educore-field-input sub-comp-pass" placeholder="Pass Marks" style="height:34px; font-size:12.5px;" value="13">
+                                    <button type="button" class="ifs-btn-del-subitem" title="Remove Component">&times;</button>
                                 </div>
                             </div>
                         </div>
@@ -863,7 +994,7 @@ function educore_render_subjects_view() {
                             <th style="width: 18%;"><?php esc_html_e( 'Class / Section', 'ifsedu-school-management' ); ?></th>
                             <th style="width: 25%;"><?php esc_html_e( 'Subject Details', 'ifsedu-school-management' ); ?></th>
                             <th style="width: 15%;"><?php esc_html_e( 'Full / Pass', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 24%;"><?php esc_html_e( 'Mark Distribution (CQ / MCQ / PR)', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 24%;"><?php esc_html_e( 'Mark Distribution', 'ifsedu-school-management' ); ?></th>
                             <th style="width: 12%; text-align:right;"><?php esc_html_e( 'Actions', 'ifsedu-school-management' ); ?></th>
                         </tr>
                     </thead>
@@ -877,6 +1008,9 @@ function educore_render_subjects_view() {
                             $class_label = ! empty( $sub_item->class_name ) ? $sub_item->class_name . ( ! empty( $sub_item->section_name ) ? ' (' . $sub_item->section_name . ')' : '' ) : 'N/A';
                             $row_class_attr = ! empty( $sub_item->class_name ) ? strtolower( trim( (string) $sub_item->class_name ) ) : '';
                             $row_filter_tag = strtolower( trim( (string) $class_label ) );
+
+                            // Check Custom Breakdown JSON
+                            $custom_breakdowns = ! empty( $sub_item->breakdown_data ) ? json_decode( $sub_item->breakdown_data, true ) : array();
                         ?>
                             <tr data-class-name="<?php echo esc_attr( $row_class_attr ); ?>" data-filter-tag="<?php echo esc_attr( $row_filter_tag ); ?>">
                                 <td style="text-align:center;">
@@ -894,13 +1028,23 @@ function educore_render_subjects_view() {
                                     <small style="color:#64748b; font-weight:700;">(Pass: <?php echo floatval( $sub_item->pass_marks ?? 33 ); ?>)</small>
                                 </td>
                                 <td>
-                                    <div class="ifs-educore-breakdown-chip">
-                                        <span>CQ: <strong><?php echo floatval( $sub_item->cq_marks ?? 0 ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->cq_pass ?? 0 ); ?>)</small></span> |
-                                        <span>MCQ: <strong><?php echo floatval( $sub_item->mcq_marks ?? 0 ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->mcq_pass ?? 0 ); ?>)</small></span>
-                                        <?php if ( floatval( $sub_item->practical_marks ?? 0 ) > 0 ) : ?>
-                                            | <span>PR: <strong><?php echo floatval( $sub_item->practical_marks ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->practical_pass ?? 0 ); ?>)</small></span>
-                                        <?php endif; ?>
-                                    </div>
+                                    <?php if ( ! empty( $custom_breakdowns ) && is_array( $custom_breakdowns ) ) : ?>
+                                        <div style="display:flex; flex-wrap:wrap; gap:4px;">
+                                            <?php foreach ( $custom_breakdowns as $cbk ) : ?>
+                                                <span class="ifs-educore-breakdown-chip" style="background:#f0fdf4; border-color:#bbf7d0; color:#15803d;">
+                                                    <?php echo esc_html( $cbk['name'] ); ?>: <strong><?php echo floatval( $cbk['total'] ); ?></strong> <small>(&ge;<?php echo floatval( $cbk['pass'] ); ?>)</small>
+                                                </span>
+                                            <?php endforeach; ?>
+                                        </div>
+                                    <?php else : ?>
+                                        <div class="ifs-educore-breakdown-chip">
+                                            <span>CQ: <strong><?php echo floatval( $sub_item->cq_marks ?? 0 ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->cq_pass ?? 0 ); ?>)</small></span> |
+                                            <span>MCQ: <strong><?php echo floatval( $sub_item->mcq_marks ?? 0 ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->mcq_pass ?? 0 ); ?>)</small></span>
+                                            <?php if ( floatval( $sub_item->practical_marks ?? 0 ) > 0 ) : ?>
+                                                | <span>PR: <strong><?php echo floatval( $sub_item->practical_marks ); ?></strong> <small>(&ge;<?php echo floatval( $sub_item->practical_pass ?? 0 ); ?>)</small></span>
+                                            <?php endif; ?>
+                                        </div>
+                                    <?php endif; ?>
                                 </td>
                                 <td style="text-align: right;">
                                     <div style="display:inline-flex; gap:6px;">
@@ -920,6 +1064,7 @@ function educore_render_subjects_view() {
                                                 data-mcq-pass="<?php echo esc_attr( $sub_item->mcq_pass ?? 0 ); ?>"
                                                 data-practical="<?php echo esc_attr( $sub_item->practical_marks ?? 0 ); ?>"
                                                 data-practical-pass="<?php echo esc_attr( $sub_item->practical_pass ?? 0 ); ?>"
+                                                data-breakdown="<?php echo esc_attr( ! empty( $sub_item->breakdown_data ) ? $sub_item->breakdown_data : '' ); ?>"
                                                 title="<?php esc_attr_e( 'Edit Subject Scheme', 'ifsedu-school-management' ); ?>">
                                             <span class="dashicons dashicons-edit"></span>
                                         </button>
@@ -973,11 +1118,12 @@ function educore_render_subjects_view() {
                     </div>
                     <div>
                         <label class="ifs-educore-form-label"><?php esc_html_e( 'Preset Distribution', 'ifsedu-school-management' ); ?></label>
-                        <select class="ifs-educore-field-select" id="edit_preset_selector">
+                        <select name="preset_type" class="ifs-educore-field-select" id="edit_preset_selector">
                             <option value="gen_100">General (70/30)</option>
                             <option value="sci_100">Science (50/25/25)</option>
                             <option value="lang_100">Language (100 CQ)</option>
                             <option value="jun_50">Junior Tier (35/15)</option>
+                            <option value="other"><?php esc_html_e( 'Other (Custom Breakdown)', 'ifsedu-school-management' ); ?></option>
                         </select>
                     </div>
                 </div>
@@ -997,39 +1143,64 @@ function educore_render_subjects_view() {
                     </div>
                 </div>
 
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom: 12px;">
-                    <div>
-                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Full Marks', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
-                        <input type="number" step="0.5" id="edit_total_marks" name="total_marks" class="ifs-educore-field-input" required>
+                <!-- Edit Modal Standard Mark Inputs -->
+                <div id="edit_modal_standard_grid">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom: 12px;">
+                        <div>
+                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Full Marks', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                            <input type="number" step="0.5" id="edit_total_marks" name="total_marks" class="ifs-educore-field-input" required>
+                        </div>
+                        <div>
+                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Overall Pass Marks', 'ifsedu-school-management' ); ?></label>
+                            <input type="number" step="0.5" id="edit_pass_marks" name="pass_marks" class="ifs-educore-field-input">
+                        </div>
                     </div>
-                    <div>
-                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Overall Pass Marks', 'ifsedu-school-management' ); ?></label>
-                        <input type="number" step="0.5" id="edit_pass_marks" name="pass_marks" class="ifs-educore-field-input">
+
+                    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-bottom: 16px; background:#f8fafc; padding:12px; border-radius:10px; border:1px solid #e2e8f0;">
+                        <div>
+                            <label class="ifs-educore-form-label"><?php esc_html_e( 'CQ (Total / Pass)', 'ifsedu-school-management' ); ?></label>
+                            <div style="display:flex; gap:4px;">
+                                <input type="number" step="0.5" id="edit_cq_marks" name="cq_marks" class="ifs-educore-field-input" placeholder="CQ">
+                                <input type="number" step="0.5" id="edit_cq_pass" name="cq_pass" class="ifs-educore-field-input" placeholder="Pass">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="ifs-educore-form-label"><?php esc_html_e( 'MCQ (Total / Pass)', 'ifsedu-school-management' ); ?></label>
+                            <div style="display:flex; gap:4px;">
+                                <input type="number" step="0.5" id="edit_mcq_marks" name="mcq_marks" class="ifs-educore-field-input" placeholder="MCQ">
+                                <input type="number" step="0.5" id="edit_mcq_pass" name="mcq_pass" class="ifs-educore-field-input" placeholder="Pass">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Practical (Tot / Pass)', 'ifsedu-school-management' ); ?></label>
+                            <div style="display:flex; gap:4px;">
+                                <input type="number" step="0.5" id="edit_practical_marks" name="practical_marks" class="ifs-educore-field-input" placeholder="PR">
+                                <input type="number" step="0.5" id="edit_practical_pass" name="practical_pass" class="ifs-educore-field-input" placeholder="Pass">
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px; margin-bottom: 16px; background:#f8fafc; padding:12px; border-radius:10px; border:1px solid #e2e8f0;">
-                    <div>
-                        <label class="ifs-educore-form-label"><?php esc_html_e( 'CQ (Total / Pass)', 'ifsedu-school-management' ); ?></label>
-                        <div style="display:flex; gap:4px;">
-                            <input type="number" step="0.5" id="edit_cq_marks" name="cq_marks" class="ifs-educore-field-input" placeholder="CQ">
-                            <input type="number" step="0.5" id="edit_cq_pass" name="cq_pass" class="ifs-educore-field-input" placeholder="Pass">
+                <!-- Edit Modal Custom Breakdown Container -->
+                <div id="edit_modal_custom_breakdown" style="display:none; background:#ffffff; border:1.5px solid #00523c; border-radius:8px; padding:12px; margin-bottom:16px;">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:12px; align-items:end; margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid #e2e8f0;">
+                        <div>
+                            <label class="ifs-educore-form-label" style="color:#00523c;"><?php esc_html_e( 'Subject Total Marks', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                            <input type="number" step="0.5" id="edit_custom_main_total" class="ifs-educore-field-input" value="100" placeholder="100">
+                        </div>
+                        <div>
+                            <label class="ifs-educore-form-label" style="color:#00523c;"><?php esc_html_e( 'Subject Overall Pass Marks', 'ifsedu-school-management' ); ?> <span style="color:#dc2626;">*</span></label>
+                            <input type="number" step="0.5" id="edit_custom_main_pass" class="ifs-educore-field-input" value="33" placeholder="33">
+                        </div>
+                        <div>
+                            <button type="button" id="edit_btn_add_subitem" style="background:#00523c; color:#fff; border:none; padding:8px 12px; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer; height:38px;">+ Add Component</button>
                         </div>
                     </div>
-                    <div>
-                        <label class="ifs-educore-form-label"><?php esc_html_e( 'MCQ (Total / Pass)', 'ifsedu-school-management' ); ?></label>
-                        <div style="display:flex; gap:4px;">
-                            <input type="number" step="0.5" id="edit_mcq_marks" name="mcq_marks" class="ifs-educore-field-input" placeholder="MCQ">
-                            <input type="number" step="0.5" id="edit_mcq_pass" name="mcq_pass" class="ifs-educore-field-input" placeholder="Pass">
-                        </div>
+                    <div style="margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                        <small style="font-size:11.5px; font-weight:700; color:#475569; text-transform:uppercase;"><?php esc_html_e( 'Component Breakdown Items', 'ifsedu-school-management' ); ?></small>
+                        <small style="font-size:11.5px; color:#64748b;" id="edit_custom_sum_indicator"></small>
                     </div>
-                    <div>
-                        <label class="ifs-educore-form-label"><?php esc_html_e( 'Practical (Tot / Pass)', 'ifsedu-school-management' ); ?></label>
-                        <div style="display:flex; gap:4px;">
-                            <input type="number" step="0.5" id="edit_practical_marks" name="practical_marks" class="ifs-educore-field-input" placeholder="PR">
-                            <input type="number" step="0.5" id="edit_practical_pass" name="practical_pass" class="ifs-educore-field-input" placeholder="Pass">
-                        </div>
-                    </div>
+                    <div id="edit_subitems_container"></div>
                 </div>
 
                 <div style="display:flex; justify-content:flex-end; gap:10px;">
@@ -1127,28 +1298,117 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function applyPresetValues(totalInp, passInp, cqInp, cqPass, mcqInp, mcqPass, prInp, prPass, presetKey) {
+    function detectMatchingPreset(total, pass, cq, cqPass, mcq, mcqPass, pr, prPass, breakdownData) {
+        if (breakdownData && breakdownData.length > 2) {
+            return 'other';
+        }
+        if (total == 100 && pass == 33 && cq == 70 && cqPass == 23 && mcq == 30 && mcqPass == 10 && pr == 0 && prPass == 0) {
+            return 'gen_100';
+        } else if (total == 100 && pass == 33 && cq == 50 && cqPass == 17 && mcq == 25 && mcqPass == 8 && pr == 25 && prPass == 8) {
+            return 'sci_100';
+        } else if (total == 100 && pass == 33 && cq == 100 && cqPass == 33 && mcq == 0 && mcqPass == 0 && pr == 0 && prPass == 0) {
+            return 'lang_100';
+        } else if (total == 50 && pass == 17 && cq == 35 && cqPass == 12 && mcq == 15 && mcqPass == 5 && pr == 0 && prPass == 0) {
+            return 'jun_50';
+        }
+        return 'other';
+    }
+
+    function syncCustomBreakdownTotals(row) {
+        if (!row) return;
+        var subItems = row.querySelectorAll('.ifs-sub-item-row');
+        if (subItems.length === 0) return;
+
+        var sumTotal = 0;
+        var sumPass = 0;
+
+        subItems.forEach(function(itemRow) {
+            var m = parseFloat(itemRow.querySelector('.sub-comp-total').value) || 0;
+            var p = parseFloat(itemRow.querySelector('.sub-comp-pass').value) || 0;
+            sumTotal += m;
+            sumPass += p;
+        });
+
+        var mainTotalInp = row.querySelector('.custom-main-total');
+        var mainPassInp = row.querySelector('.custom-main-pass');
+        var fTotal = row.querySelector('.f-total');
+        var fPass = row.querySelector('.f-pass');
+
+        var finalTot = mainTotalInp ? (parseFloat(mainTotalInp.value) || sumTotal) : sumTotal;
+        var finalPas = mainPassInp ? (parseFloat(mainPassInp.value) || sumPass) : sumPass;
+
+        if (fTotal) fTotal.value = finalTot;
+        if (fPass) fPass.value = finalPas;
+
+        var ind = row.querySelector('.custom-sum-indicator');
+        if (ind) ind.textContent = '(Sum of items: Total ' + sumTotal + ' | Pass ' + sumPass + ')';
+    }
+
+    function syncModalCustomBreakdownTotals() {
+        var modal = document.getElementById('ifs-educore-edit-modal');
+        if (!modal) return;
+        var subItems = modal.querySelectorAll('#edit_subitems_container .ifs-sub-item-row');
+        var sumTotal = 0;
+        var sumPass = 0;
+
+        subItems.forEach(function(itemRow) {
+            var m = parseFloat(itemRow.querySelector('.sub-comp-total').value) || 0;
+            var p = parseFloat(itemRow.querySelector('.sub-comp-pass').value) || 0;
+            sumTotal += m;
+            sumPass += p;
+        });
+
+        var mainTotInp = document.getElementById('edit_custom_main_total');
+        var mainPasInp = document.getElementById('edit_custom_main_pass');
+        var editTot = document.getElementById('edit_total_marks');
+        var editPas = document.getElementById('edit_pass_marks');
+
+        var finalTot = mainTotInp ? (parseFloat(mainTotInp.value) || sumTotal) : sumTotal;
+        var finalPas = mainPasInp ? (parseFloat(mainPasInp.value) || sumPass) : sumPass;
+
+        if (editTot) editTot.value = finalTot;
+        if (editPas) editPas.value = finalPas;
+
+        var ind = document.getElementById('edit_custom_sum_indicator');
+        if (ind) ind.textContent = '(Sum of items: Total ' + sumTotal + ' | Pass ' + sumPass + ')';
+    }
+
+    function applyPresetValues(totalInp, passInp, cqInp, cqPass, mcqInp, mcqPass, prInp, prPass, presetKey, rowContext) {
         if (!totalInp) return;
-        if (presetKey === 'gen_100') {
-            totalInp.value = 100; passInp.value = 33;
-            cqInp.value = 70; cqPass.value = 23;
-            mcqInp.value = 30; mcqPass.value = 10;
-            prInp.value = 0; prPass.value = 0;
-        } else if (presetKey === 'sci_100') {
-            totalInp.value = 100; passInp.value = 33;
-            cqInp.value = 50; cqPass.value = 17;
-            mcqInp.value = 25; mcqPass.value = 8;
-            prInp.value = 25; prPass.value = 8;
-        } else if (presetKey === 'lang_100') {
-            totalInp.value = 100; passInp.value = 33;
-            cqInp.value = 100; cqPass.value = 33;
-            mcqInp.value = 0; mcqPass.value = 0;
-            prInp.value = 0; prPass.value = 0;
-        } else if (presetKey === 'jun_50') {
-            totalInp.value = 50; passInp.value = 17;
-            cqInp.value = 35; cqPass.value = 12;
-            mcqInp.value = 15; mcqPass.value = 5;
-            prInp.value = 0; prPass.value = 0;
+        var standardGrid = rowContext ? rowContext.querySelector('.ifs-educore-repeater-grid-marks') : null;
+        var subRepeater = rowContext ? rowContext.querySelector('.ifs-custom-breakdown-subrepeater') : null;
+
+        if (presetKey === 'other') {
+            if (standardGrid) standardGrid.style.display = 'none';
+            if (subRepeater) {
+                subRepeater.classList.add('is-active');
+                syncCustomBreakdownTotals(rowContext);
+            }
+        } else {
+            if (standardGrid) standardGrid.style.display = 'grid';
+            if (subRepeater) subRepeater.classList.remove('is-active');
+
+            if (presetKey === 'gen_100') {
+                totalInp.value = 100; passInp.value = 33;
+                cqInp.value = 70; cqPass.value = 23;
+                mcqInp.value = 30; mcqPass.value = 10;
+                prInp.value = 0; prPass.value = 0;
+            } else if (presetKey === 'sci_100') {
+                totalInp.value = 100; passInp.value = 33;
+                cqInp.value = 50; cqPass.value = 17;
+                mcqInp.value = 25; mcqPass.value = 8;
+                prInp.value = 25; prPass.value = 8;
+            } else if (presetKey === 'lang_100') {
+                totalInp.value = 100; passInp.value = 33;
+                cqInp.value = 100; cqPass.value = 33;
+                mcqInp.value = 0; mcqPass.value = 0;
+                prInp.value = 0; prPass.value = 0;
+            } else if (presetKey === 'jun_50') {
+                totalInp.value = 50; passInp.value = 17;
+                cqInp.value = 35; cqPass.value = 12;
+                mcqInp.value = 15; mcqPass.value = 5;
+                prInp.value = 0; prPass.value = 0;
+            }
         }
     }
 
@@ -1171,18 +1431,88 @@ document.addEventListener('DOMContentLoaded', function() {
                     row.querySelector('.f-cq'), row.querySelector('.f-cq-pass'),
                     row.querySelector('.f-mcq'), row.querySelector('.f-mcq-pass'),
                     row.querySelector('.f-pr'), row.querySelector('.f-pr-pass'),
-                    e.target.value
+                    e.target.value,
+                    row
                 );
             }
         }
         if (e.target.id === 'edit_preset_selector') {
+            var modalStdGrid = document.getElementById('edit_modal_standard_grid');
+            var modalCustom = document.getElementById('edit_modal_custom_breakdown');
+            if (e.target.value === 'other') {
+                if (modalStdGrid) modalStdGrid.style.display = 'none';
+                if (modalCustom) modalCustom.style.display = 'block';
+                syncModalCustomBreakdownTotals();
+            } else {
+                if (modalStdGrid) modalStdGrid.style.display = 'block';
+                if (modalCustom) modalCustom.style.display = 'none';
+            }
             applyPresetValues(
                 document.getElementById('edit_total_marks'), document.getElementById('edit_pass_marks'),
                 document.getElementById('edit_cq_marks'), document.getElementById('edit_cq_pass'),
                 document.getElementById('edit_mcq_marks'), document.getElementById('edit_mcq_pass'),
                 document.getElementById('edit_practical_marks'), document.getElementById('edit_practical_pass'),
-                e.target.value
+                e.target.value,
+                null
             );
+        }
+    });
+
+    // Custom Component Sub-Repeater Events (+ Add Component & Delete Component)
+    document.addEventListener('click', function(e) {
+        if (e.target.classList.contains('ifs-btn-add-subitem')) {
+            var parentRow = e.target.closest('.ifs-educore-repeater-row');
+            var rowIndex = parentRow ? parentRow.getAttribute('data-row-index') : 0;
+            var subRepeater = e.target.closest('.ifs-custom-breakdown-subrepeater');
+            var container = subRepeater.querySelector('.ifs-subitems-container');
+            var newSubRow = document.createElement('div');
+            newSubRow.className = 'ifs-sub-item-row';
+            newSubRow.innerHTML = `
+                <input type="text" name="sub_comp_name[${rowIndex}][]" class="ifs-educore-field-input sub-comp-name" placeholder="Component Name (e.g. Viva / Lab / Quiz)" style="height:34px; font-size:12.5px;">
+                <input type="number" step="0.5" name="sub_comp_total[${rowIndex}][]" class="ifs-educore-field-input sub-comp-total" placeholder="Max Marks" style="height:34px; font-size:12.5px;" value="20">
+                <input type="number" step="0.5" name="sub_comp_pass[${rowIndex}][]" class="ifs-educore-field-input sub-comp-pass" placeholder="Pass Marks" style="height:34px; font-size:12.5px;" value="7">
+                <button type="button" class="ifs-btn-del-subitem" title="Remove Component">&times;</button>
+            `;
+            container.appendChild(newSubRow);
+            syncCustomBreakdownTotals(parentRow);
+        }
+
+        if (e.target.id === 'edit_btn_add_subitem') {
+            var editContainer = document.getElementById('edit_subitems_container');
+            var newEditRow = document.createElement('div');
+            newEditRow.className = 'ifs-sub-item-row';
+            newEditRow.innerHTML = `
+                <input type="text" name="sub_comp_name[]" class="ifs-educore-field-input sub-comp-name" placeholder="Component Name (e.g. Attendance / Viva)" style="height:34px; font-size:12.5px;">
+                <input type="number" step="0.5" name="sub_comp_total[]" class="ifs-educore-field-input sub-comp-total" placeholder="Max" style="height:34px; font-size:12.5px;" value="20">
+                <input type="number" step="0.5" name="sub_comp_pass[]" class="ifs-educore-field-input sub-comp-pass" placeholder="Pass" style="height:34px; font-size:12.5px;" value="7">
+                <button type="button" class="ifs-btn-del-subitem" title="Remove Component">&times;</button>
+            `;
+            editContainer.appendChild(newEditRow);
+            syncModalCustomBreakdownTotals();
+        }
+
+        if (e.target.classList.contains('ifs-btn-del-subitem')) {
+            var rowToDel = e.target.closest('.ifs-sub-item-row');
+            var parentRepeaterRow = e.target.closest('.ifs-educore-repeater-row');
+            if (rowToDel) {
+                rowToDel.remove();
+                if (parentRepeaterRow) {
+                    syncCustomBreakdownTotals(parentRepeaterRow);
+                } else {
+                    syncModalCustomBreakdownTotals();
+                }
+            }
+        }
+    });
+
+    document.addEventListener('input', function(e) {
+        if (e.target.classList.contains('sub-comp-total') || e.target.classList.contains('sub-comp-pass') || e.target.classList.contains('custom-main-total') || e.target.classList.contains('custom-main-pass')) {
+            var repeaterRow = e.target.closest('.ifs-educore-repeater-row');
+            if (repeaterRow) syncCustomBreakdownTotals(repeaterRow);
+        }
+
+        if (e.target.id === 'edit_custom_main_total' || e.target.id === 'edit_custom_main_pass' || (e.target.closest('#edit_subitems_container') && (e.target.classList.contains('sub-comp-total') || e.target.classList.contains('sub-comp-pass')))) {
+            syncModalCustomBreakdownTotals();
         }
     });
 
@@ -1192,7 +1522,12 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateRemoveButtons() {
         if (!canvas) return;
         var rows = canvas.querySelectorAll('.ifs-educore-repeater-row');
-        rows.forEach(function(row) {
+        rows.forEach(function(row, idx) {
+            row.setAttribute('data-row-index', idx);
+            row.querySelectorAll('.sub-comp-name').forEach(function(i) { i.name = `sub_comp_name[${idx}][]`; });
+            row.querySelectorAll('.sub-comp-total').forEach(function(i) { i.name = `sub_comp_total[${idx}][]`; });
+            row.querySelectorAll('.sub-comp-pass').forEach(function(i) { i.name = `sub_comp_pass[${idx}][]`; });
+
             var btn = row.querySelector('.btn-remove-row');
             if (rows.length > 1) {
                 btn.removeAttribute('disabled');
@@ -1206,11 +1541,27 @@ document.addEventListener('DOMContentLoaded', function() {
         addBtn.addEventListener('click', function() {
             var rows = canvas.querySelectorAll('.ifs-educore-repeater-row');
             var newRow = rows[0].cloneNode(true);
+            var nextIndex = rows.length;
 
+            newRow.setAttribute('data-row-index', nextIndex);
             newRow.querySelectorAll('input[type="text"]').forEach(function(inp) { inp.value = ''; });
             var orderInput = newRow.querySelector('.f-order');
             if (orderInput) {
-                orderInput.value = rows.length + 1;
+                orderInput.value = nextIndex + 1;
+            }
+
+            var presetDropdown = newRow.querySelector('.preset-selector');
+            if (presetDropdown) {
+                presetDropdown.value = 'gen_100';
+            }
+
+            var subRepeater = newRow.querySelector('.ifs-custom-breakdown-subrepeater');
+            if (subRepeater) {
+                subRepeater.classList.remove('is-active');
+            }
+            var stdGrid = newRow.querySelector('.ifs-educore-repeater-grid-marks');
+            if (stdGrid) {
+                stdGrid.style.display = 'grid';
             }
 
             applyPresetValues(
@@ -1218,7 +1569,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 newRow.querySelector('.f-cq'), newRow.querySelector('.f-cq-pass'),
                 newRow.querySelector('.f-mcq'), newRow.querySelector('.f-mcq-pass'),
                 newRow.querySelector('.f-pr'), newRow.querySelector('.f-pr-pass'),
-                'gen_100'
+                'gen_100',
+                newRow
             );
 
             canvas.appendChild(newRow);
@@ -1237,9 +1589,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // --------------------------------------------------------------------------
     // Real-Time Table Filter
-    // --------------------------------------------------------------------------
     var filterSelect = document.getElementById('ifs-educore-class-filter');
     var tableBody = document.querySelector('#ifs-educore-subjects-table tbody');
     var countPill = document.getElementById('ifs-educore-subject-count-pill');
@@ -1286,18 +1636,81 @@ document.addEventListener('DOMContentLoaded', function() {
             var targetUnitId = editBtn.getAttribute('data-unit-id');
             var targetClassName = editBtn.getAttribute('data-class-name');
 
+            var totVal = editBtn.getAttribute('data-total') || 100;
+            var passVal = editBtn.getAttribute('data-pass') || 33;
+            var cqVal = editBtn.getAttribute('data-cq') || 0;
+            var cqPassVal = editBtn.getAttribute('data-cq-pass') || 0;
+            var mcqVal = editBtn.getAttribute('data-mcq') || 0;
+            var mcqPassVal = editBtn.getAttribute('data-mcq-pass') || 0;
+            var prVal = editBtn.getAttribute('data-practical') || 0;
+            var prPassVal = editBtn.getAttribute('data-practical-pass') || 0;
+            var breakdownRaw = editBtn.getAttribute('data-breakdown') || '';
+
             document.getElementById('edit_subject_id').value         = editBtn.getAttribute('data-id');
             document.getElementById('edit_subject_name').value       = editBtn.getAttribute('data-name');
             document.getElementById('edit_subject_code').value       = editBtn.getAttribute('data-code');
             document.getElementById('edit_subject_order').value      = editBtn.getAttribute('data-order') || 0;
-            document.getElementById('edit_total_marks').value        = editBtn.getAttribute('data-total');
-            document.getElementById('edit_pass_marks').value         = editBtn.getAttribute('data-pass');
-            document.getElementById('edit_cq_marks').value           = editBtn.getAttribute('data-cq');
-            document.getElementById('edit_cq_pass').value            = editBtn.getAttribute('data-cq-pass');
-            document.getElementById('edit_mcq_marks').value          = editBtn.getAttribute('data-mcq');
-            document.getElementById('edit_mcq_pass').value           = editBtn.getAttribute('data-mcq-pass');
-            document.getElementById('edit_practical_marks').value    = editBtn.getAttribute('data-practical');
-            document.getElementById('edit_practical_pass').value     = editBtn.getAttribute('data-practical-pass');
+            document.getElementById('edit_total_marks').value        = totVal;
+            document.getElementById('edit_pass_marks').value         = passVal;
+            document.getElementById('edit_cq_marks').value           = cqVal;
+            document.getElementById('edit_cq_pass').value            = cqPassVal;
+            document.getElementById('edit_mcq_marks').value          = mcqVal;
+            document.getElementById('edit_mcq_pass').value           = mcqPassVal;
+            document.getElementById('edit_practical_marks').value    = prVal;
+            document.getElementById('edit_practical_pass').value     = prPassVal;
+
+            var editPresetDropdown = document.getElementById('edit_preset_selector');
+            var modalStdGrid = document.getElementById('edit_modal_standard_grid');
+            var modalCustom = document.getElementById('edit_modal_custom_breakdown');
+            var editSubContainer = document.getElementById('edit_subitems_container');
+
+            var detected = detectMatchingPreset(totVal, passVal, cqVal, cqPassVal, mcqVal, mcqPassVal, prVal, prPassVal, breakdownRaw);
+            if (editPresetDropdown) {
+                editPresetDropdown.value = detected;
+            }
+
+            if (detected === 'other') {
+                if (modalStdGrid) modalStdGrid.style.display = 'none';
+                if (modalCustom) modalCustom.style.display = 'block';
+
+                document.getElementById('edit_custom_main_total').value = totVal;
+                document.getElementById('edit_custom_main_pass').value = passVal;
+
+                if (editSubContainer) {
+                    editSubContainer.innerHTML = '';
+                    var parsedBreakdown = [];
+                    try {
+                        parsedBreakdown = JSON.parse(breakdownRaw);
+                    } catch (err) {}
+
+                    if (Array.isArray(parsedBreakdown) && parsedBreakdown.length > 0) {
+                        parsedBreakdown.forEach(function(item) {
+                            var div = document.createElement('div');
+                            div.className = 'ifs-sub-item-row';
+                            div.innerHTML = `
+                                <input type="text" name="sub_comp_name[]" class="ifs-educore-field-input sub-comp-name" placeholder="Component Name" style="height:34px; font-size:12.5px;" value="${item.name}">
+                                <input type="number" step="0.5" name="sub_comp_total[]" class="ifs-educore-field-input sub-comp-total" placeholder="Max" style="height:34px; font-size:12.5px;" value="${item.total}">
+                                <input type="number" step="0.5" name="sub_comp_pass[]" class="ifs-educore-field-input sub-comp-pass" placeholder="Pass" style="height:34px; font-size:12.5px;" value="${item.pass}">
+                                <button type="button" class="ifs-btn-del-subitem" title="Remove Component">&times;</button>
+                            `;
+                            editSubContainer.appendChild(div);
+                        });
+                    } else {
+                        editSubContainer.innerHTML = `
+                            <div class="ifs-sub-item-row">
+                                <input type="text" name="sub_comp_name[]" class="ifs-educore-field-input sub-comp-name" placeholder="Component Name" style="height:34px; font-size:12.5px;" value="Written Exam">
+                                <input type="number" step="0.5" name="sub_comp_total[]" class="ifs-educore-field-input sub-comp-total" placeholder="Max" style="height:34px; font-size:12.5px;" value="${totVal}">
+                                <input type="number" step="0.5" name="sub_comp_pass[]" class="ifs-educore-field-input sub-comp-pass" placeholder="Pass" style="height:34px; font-size:12.5px;" value="${passVal}">
+                                <button type="button" class="ifs-btn-del-subitem" title="Remove Component">&times;</button>
+                            </div>
+                        `;
+                    }
+                    syncModalCustomBreakdownTotals();
+                }
+            } else {
+                if (modalStdGrid) modalStdGrid.style.display = 'block';
+                if (modalCustom) modalCustom.style.display = 'none';
+            }
 
             document.querySelectorAll('#edit_class_checkbox_container .edit-class-cb').forEach(function(cb) {
                 var cbUnitId = cb.getAttribute('data-unit-id');

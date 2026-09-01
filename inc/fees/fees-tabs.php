@@ -21,7 +21,7 @@ function educore_fees_tab() {
         wp_die( esc_html__( 'You do not have sufficient permissions to access the financial fees module.', 'ifsedu-school-management' ) );
     }
 
-    $allowed_sub_tabs = array( 'list', 'collect', 'settings', 'print' );
+    $allowed_sub_tabs = array( 'list', 'collect', 'print' );
 
     // phpcs:disable WordPress.Security.NonceVerification.Recommended
     $raw_sub_tab = isset( $_GET['sub'] ) ? sanitize_key( wp_unslash( $_GET['sub'] ) ) : 'list';
@@ -29,16 +29,10 @@ function educore_fees_tab() {
 
     $sub_tab = in_array( $raw_sub_tab, $allowed_sub_tabs, true ) ? $raw_sub_tab : 'list';
 
-    // Restrict settings tab to admins only
-    if ( 'settings' === $sub_tab && ! $is_admin ) {
-        $sub_tab = 'list';
-    }
-
     // Construct URLs for top submenu links
     $base_admin_url = admin_url( 'admin.php' );
     $all_fees_url   = add_query_arg( array( 'page' => 'school_management_system', 'tab' => 'fees', 'sub' => 'list' ), $base_admin_url );
     $collect_url    = add_query_arg( array( 'page' => 'school_management_system', 'tab' => 'fees', 'sub' => 'collect' ), $base_admin_url );
-    $settings_url   = add_query_arg( array( 'page' => 'school_management_system', 'tab' => 'fees', 'sub' => 'settings' ), $base_admin_url );
     ?>
 
     <div class="ifs-educore-fees-nav-root">
@@ -57,15 +51,6 @@ function educore_fees_tab() {
                     <span class="dashicons dashicons-plus-alt2"></span>
                     <?php esc_html_e( '+ Collect Student Fee', 'ifsedu-school-management' ); ?>
                 </a>
-
-                <!-- Fee Settings Accessible to Admin Only -->
-                <?php if ( $is_admin ) : ?>
-                    <a href="<?php echo esc_url( $settings_url ); ?>" 
-                       class="ifs-educore-nav-link <?php echo ( 'settings' === $sub_tab ) ? 'ifs-educore-nav-link-active' : 'ifs-educore-nav-link-inactive'; ?>">
-                        <span class="dashicons dashicons-admin-settings"></span>
-                        <?php esc_html_e( 'Fee Settings', 'ifsedu-school-management' ); ?>
-                    </a>
-                <?php endif; ?>
             </div>
 
             <?php if ( 'print' === $sub_tab ) : ?>
@@ -95,26 +80,6 @@ function educore_fees_tab() {
                                 ),
                                 array( 'code' => array() )
                             ) . '</div>';
-                    }
-                    break;
-
-                case 'settings':
-                    if ( $is_admin ) {
-                        if ( function_exists( 'educore_fees_settings_view' ) ) {
-                            educore_fees_settings_view();
-                        } else {
-                            echo '<div class="ifs-educore-notice-card"><span class="dashicons dashicons-info" style="vertical-align:middle; margin-right:6px;"></span> ' . 
-                                wp_kses(
-                                    sprintf(
-                                        /* translators: %s: Function name */
-                                        __( 'Fee Settings module is initializing. Define %s.', 'ifsedu-school-management' ),
-                                        '<code>educore_fees_settings_view()</code>'
-                                    ),
-                                    array( 'code' => array() )
-                                ) . '</div>';
-                        }
-                    } else {
-                        echo '<div class="ifs-educore-notice-card" style="background:#fef2f2; border-left-color:#dc2626; color:#991b1b;"><span class="dashicons dashicons-lock" style="vertical-align:middle; margin-right:6px;"></span> ' . esc_html__( 'Restricted: Fee Settings configuration is restricted to administrators.', 'ifsedu-school-management' ) . '</div>';
                     }
                     break;
 

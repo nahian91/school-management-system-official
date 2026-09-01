@@ -26,7 +26,7 @@ function educore_accounting_add_edit_view() {
     }
 
     if ( ! $is_admin && ! $is_accountant ) {
-        // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $staff_row = $wpdb->get_row(
             $wpdb->prepare(
                 "SELECT designation, staff_type FROM `{$table_staff}` WHERE wp_user_id = %d OR email = %s LIMIT 1",
@@ -57,7 +57,7 @@ function educore_accounting_add_edit_view() {
     $entry    = null;
 
     if ( $is_edit && $entry_id > 0 ) {
-        // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
+        // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         $entry = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$table_accounting}` WHERE id = %d LIMIT 1", $entry_id ) );
         // phpcs:enable
         if ( ! $entry ) {
@@ -81,6 +81,7 @@ function educore_accounting_add_edit_view() {
     if ( isset( $_POST['educore_save_accounting_entry'] ) && isset( $_POST['ifs_educore_acct_nonce'] ) && wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['ifs_educore_acct_nonce'] ) ), 'save_acct_action' ) ) {
         
         $entry_type       = isset( $_POST['entry_type'] ) ? sanitize_text_field( wp_unslash( $_POST['entry_type'] ) ) : 'Income';
+        $journal_mode     = isset( $_POST['journal_mode'] ) ? sanitize_text_field( wp_unslash( $_POST['journal_mode'] ) ) : 'Single';
         $category_name    = isset( $_POST['category_name'] ) ? sanitize_text_field( wp_unslash( $_POST['category_name'] ) ) : '';
         $department       = isset( $_POST['department'] ) ? sanitize_text_field( wp_unslash( $_POST['department'] ) ) : 'General Administration';
         $cost_center_code = isset( $_POST['cost_center_code'] ) ? sanitize_text_field( wp_unslash( $_POST['cost_center_code'] ) ) : 'CC-ADMIN-01';
@@ -150,11 +151,11 @@ function educore_accounting_add_edit_view() {
             );
 
             if ( $is_edit && $entry_id > 0 ) {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+                // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
                 $result      = $wpdb->update( $table_accounting, $data, array( 'id' => $entry_id ), $formats, array( '%d' ) );
                 $status_flag = 'updated';
             } else {
-                // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery
+                // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery
                 $result      = $wpdb->insert( $table_accounting, $data, $formats );
                 $status_flag = 'success';
             }
@@ -191,6 +192,231 @@ function educore_accounting_add_edit_view() {
     }
     ?>
 
+    <style>
+        .ifs-educore-add-acct-container {
+            max-width: 1040px;
+            margin: 15px 0 40px 0;
+            font-family: inherit;
+        }
+        .ifs-educore-header-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 18px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .ifs-educore-back-btn {
+            background: #ffffff;
+            border: 1.5px solid #cbd5e1;
+            color: #334155;
+            text-decoration: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 13px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+        .ifs-educore-back-btn:hover {
+            background: #f8fafc;
+            color: #00523c;
+            border-color: #00523c;
+        }
+        .ifs-educore-bento-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 28px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+            box-sizing: border-box;
+        }
+        .ifs-educore-card-title-group {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1.5px solid #f1f5f9;
+            padding-bottom: 14px;
+            margin-bottom: 22px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .ifs-educore-card-title {
+            margin: 0;
+            font-size: 17px;
+            font-weight: 800;
+            color: #0f172a;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .ifs-educore-live-summary-box {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #f8fafc;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 16px 20px;
+            margin-bottom: 24px;
+        }
+        .ifs-educore-form-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 18px;
+        }
+        .ifs-educore-form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .ifs-educore-form-group.span-2 {
+            grid-column: span 2;
+        }
+        .ifs-educore-form-group.full-width {
+            grid-column: 1 / -1;
+        }
+        @media (max-width: 900px) {
+            .ifs-educore-form-grid {
+                grid-template-columns: 1fr;
+            }
+            .ifs-educore-form-group.span-2,
+            .ifs-educore-form-group.full-width {
+                grid-column: span 1;
+            }
+        }
+        .ifs-educore-form-label {
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #475569;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            margin-bottom: 8px;
+            display: block;
+        }
+        .ifs-educore-input-field,
+        .ifs-educore-select-field,
+        .ifs-educore-textarea-field {
+            width: 100% !important;
+            height: 42px !important;
+            padding: 0 14px !important;
+            border: 1.5px solid #cbd5e1 !important;
+            border-radius: 9px !important;
+            font-size: 13.5px !important;
+            font-weight: 600 !important;
+            color: #0f172a !important;
+            background-color: #ffffff !important;
+            box-sizing: border-box !important;
+            outline: none !important;
+            transition: all 0.2s ease !important;
+        }
+        .ifs-educore-select-field {
+            padding-right: 34px !important;
+            background-image: url('data:image/svg+xml;utf8,<svg fill="%2364748b" height="20" viewBox="0 0 24 24" width="20" xmlns="http://www.w3.org/2000/svg"><path d="M7 10l5 5 5-5z"/></svg>') !important;
+            background-repeat: no-repeat !important;
+            background-position: right 10px center !important;
+            appearance: none !important;
+            -webkit-appearance: none !important;
+            cursor: pointer;
+        }
+        .ifs-educore-textarea-field {
+            height: auto !important;
+            min-height: 90px !important;
+            padding: 12px 14px !important;
+            resize: vertical;
+        }
+        .ifs-educore-input-field:focus,
+        .ifs-educore-select-field:focus,
+        .ifs-educore-textarea-field:focus {
+            border-color: #00523c !important;
+            box-shadow: 0 0 0 3px rgba(0, 82, 60, 0.12) !important;
+        }
+        .ifs-educore-select-field.type-income-active {
+            border-color: #059669 !important;
+            color: #047857 !important;
+            background-color: #f0fdf4 !important;
+        }
+        .ifs-educore-select-field.type-expense-active {
+            border-color: #dc2626 !important;
+            color: #b91c1c !important;
+            background-color: #fef2f2 !important;
+        }
+        .ifs-educore-quick-chips {
+            display: flex;
+            gap: 6px;
+            margin-top: 8px;
+            flex-wrap: wrap;
+        }
+        .ifs-educore-chip-btn {
+            background: #f1f5f9;
+            border: 1px solid #cbd5e1;
+            color: #334155;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 11.5px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .ifs-educore-chip-btn:hover {
+            background: #00523c;
+            color: #ffffff;
+            border-color: #00523c;
+        }
+        .ifs-educore-amount-words {
+            font-size: 11.5px;
+            font-weight: 700;
+            color: #059669;
+            margin-top: 6px;
+            font-style: italic;
+        }
+        .ifs-educore-btn-submit {
+            background: #00523c;
+            color: #ffffff;
+            border: none;
+            padding: 12px 26px;
+            border-radius: 9px;
+            font-weight: 800;
+            font-size: 14px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 4px 14px rgba(0, 82, 60, 0.2);
+            transition: background 0.2s ease;
+        }
+        .ifs-educore-btn-submit:hover {
+            background: #047857;
+        }
+        .ifs-educore-alert-error {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            color: #dc2626;
+            padding: 12px 16px;
+            border-radius: 9px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Journal Double-Entry Mode Box */
+        .ifs-journal-mode-box {
+            display: none;
+            background: #f8fafc;
+            border: 1.5px dashed #cbd5e1;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 18px;
+        }
+        .ifs-journal-mode-box.is-active {
+            display: block;
+        }
+    </style>
+
     <div class="ifs-educore-add-acct-container">
 
         <!-- Top Navigation Bar -->
@@ -223,7 +449,15 @@ function educore_accounting_add_edit_view() {
                     <span class="dashicons dashicons-book-alt" style="color: #00523c;"></span>
                     <?php echo $is_edit ? esc_html__( 'Edit Professional Financial Ledger Entry', 'ifsedu-school-management' ) : esc_html__( 'New Institutional Voucher Entry', 'ifsedu-school-management' ); ?>
                 </h4>
-                <span style="font-size: 12px; color: #64748b; font-weight: 600;"><?php esc_html_e( 'Double-Entry Accounting Standard', 'ifsedu-school-management' ); ?></span>
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <label style="font-size:12px; font-weight:700; color:#475569; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
+                        <span><?php esc_html_e( 'Mode:', 'ifsedu-school-management' ); ?></span>
+                        <select id="ifs_educore_journal_mode" name="journal_mode" style="height:30px; font-size:12px; border-radius:5px; border:1px solid #cbd5e1;">
+                            <option value="Single"><?php esc_html_e( 'Single Entry Voucher', 'ifsedu-school-management' ); ?></option>
+                            <option value="Double"><?php esc_html_e( 'Double-Entry Journal (Dr/Cr)', 'ifsedu-school-management' ); ?></option>
+                        </select>
+                    </label>
+                </div>
             </div>
 
             <!-- Live Summary Preview Strip -->
@@ -235,6 +469,15 @@ function educore_accounting_add_edit_view() {
                 <div style="text-align:right;">
                     <span style="font-size:11px; text-transform:uppercase; color:#64748b; font-weight:700; display:block;"><?php esc_html_e( 'Net Amount Preview', 'ifsedu-school-management' ); ?></span>
                     <strong id="ifs_educore_preview_amount" style="color:#059669; font-size:16px;">৳0.00</strong>
+                </div>
+            </div>
+
+            <!-- Double-Entry Journal Mode Details Box -->
+            <div class="ifs-journal-mode-box" id="ifs_journal_mode_panel">
+                <strong style="font-size:12px; color:#0f172a; display:block; margin-bottom:6px;"><?php esc_html_e( 'Double-Entry Balancing Matrix (Debit must equal Credit)', 'ifsedu-school-management' ); ?></strong>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:12px;">
+                    <div><?php esc_html_e( 'Total Debit (Dr):', 'ifsedu-school-management' ); ?> <strong id="matrix_total_dr" style="color:#2563eb;">৳0.00</strong></div>
+                    <div><?php esc_html_e( 'Total Credit (Cr):', 'ifsedu-school-management' ); ?> <strong id="matrix_total_cr" style="color:#059669;">৳0.00</strong></div>
                 </div>
             </div>
 
@@ -429,6 +672,8 @@ function educore_accounting_add_edit_view() {
         var wordsPreview   = document.getElementById('ifs_educore_words_preview');
         var previewTitle   = document.getElementById('ifs_educore_preview_title');
         var previewAmount  = document.getElementById('ifs_educore_preview_amount');
+        var journalModeSel = document.getElementById('ifs_educore_journal_mode');
+        var journalPanel   = document.getElementById('ifs_journal_mode_panel');
         var savedCategory  = "<?php echo $entry ? esc_js( $entry->category_name ) : ''; ?>";
 
         var incomeCategories = [
@@ -453,6 +698,16 @@ function educore_accounting_add_edit_view() {
             'Depreciation & Bank Charges',
             'Miscellaneous Expenses'
         ];
+
+        if (journalModeSel && journalPanel) {
+            journalModeSel.addEventListener('change', function() {
+                if (this.value === 'Double') {
+                    journalPanel.classList.add('is-active');
+                } else {
+                    journalPanel.classList.remove('is-active');
+                }
+            });
+        }
 
         function updateCategories() {
             if (!typeSelect || !categorySelect) return;
@@ -493,10 +748,23 @@ function educore_accounting_add_edit_view() {
 
             if (previewTitle) previewTitle.textContent = tVal !== '' ? tVal : '<?php echo esc_js( __( 'New General Ledger Voucher', 'ifsedu-school-management' ) ); ?>';
             if (previewAmount) previewAmount.textContent = '৳' + aVal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            
+            var drEl = document.getElementById('matrix_total_dr');
+            var crEl = document.getElementById('matrix_total_cr');
+            var typeVal = typeSelect ? typeSelect.value : 'Income';
+
+            if (typeVal === 'Income') {
+                if (drEl) drEl.textContent = '৳' + aVal.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                if (crEl) crEl.textContent = '৳' + aVal.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+            } else {
+                if (drEl) drEl.textContent = '৳' + aVal.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                if (crEl) crEl.textContent = '৳' + aVal.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+            }
         }
 
         if (titleInput) titleInput.addEventListener('input', updatePreview);
         if (amountInput) amountInput.addEventListener('input', updatePreview);
+        if (typeSelect) typeSelect.addEventListener('change', updatePreview);
         updatePreview();
 
         document.querySelectorAll('.ifs-educore-chip-btn').forEach(function(btn) {

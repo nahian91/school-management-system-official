@@ -70,6 +70,19 @@ function educore_exam_list_view() {
     // phpcs:enable WordPress.Security.NonceVerification.Recommended
     ?>
 
+    <style>
+        .ifs-educore-action-btn-svg.view {
+            background: #f0fdf4;
+            color: #047857;
+            border: 1px solid #bbf7d0;
+        }
+        .ifs-educore-action-btn-svg.view:hover {
+            background: #00523c;
+            color: #ffffff;
+            border-color: #00523c;
+        }
+    </style>
+
     <div class="ifs-educore-exams-root">
         
         <!-- Status Alert Notification Bar -->
@@ -101,16 +114,27 @@ function educore_exam_list_view() {
                 <table class="ifs-educore-exams-table educore-datatable">
                     <thead>
                         <tr>
-                            <th style="width: 30%;"><?php esc_html_e( 'Exam Name', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 25%;"><?php esc_html_e( 'Target Class / Tier', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 28%;"><?php esc_html_e( 'Exam Name', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 24%;"><?php esc_html_e( 'Target Class / Tier', 'ifsedu-school-management' ); ?></th>
                             <th style="width: 20%;"><?php esc_html_e( 'Schedule Period', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 15%;"><?php esc_html_e( 'Status', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 10%; text-align: right;"><?php esc_html_e( 'Actions', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 14%;"><?php esc_html_e( 'Status', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 14%; text-align: right;"><?php esc_html_e( 'Actions', 'ifsedu-school-management' ); ?></th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if ( ! empty( $exams ) ) : foreach ( $exams as $exam ) : 
                             $exam_id  = absint( $exam->id );
+                            
+                            $view_url = add_query_arg(
+                                array(
+                                    'page' => 'school_management_system',
+                                    'tab'  => 'exams',
+                                    'sub'  => 'view',
+                                    'id'   => $exam_id,
+                                ),
+                                admin_url( 'admin.php' )
+                            );
+
                             $edit_url = add_query_arg(
                                 array(
                                     'page'   => 'school_management_system',
@@ -121,6 +145,7 @@ function educore_exam_list_view() {
                                 ),
                                 admin_url( 'admin.php' )
                             );
+
                             $del_url  = wp_nonce_url(
                                 add_query_arg(
                                     array(
@@ -169,9 +194,17 @@ function educore_exam_list_view() {
                             </td>
                             <td style="text-align: right;">
                                 <div style="display: inline-flex; gap: 6px; justify-content: flex-end;">
+                                    <!-- View Details Page Button -->
+                                    <a href="<?php echo esc_url( $view_url ); ?>" class="ifs-educore-action-btn-svg view" title="<?php esc_attr_e( 'View Exam Details', 'ifsedu-school-management' ); ?>">
+                                        <span class="dashicons dashicons-visibility" style="font-size:16px; width:16px; height:16px;"></span>
+                                    </a>
+
+                                    <!-- Edit Button -->
                                     <a href="<?php echo esc_url( $edit_url ); ?>" class="ifs-educore-action-btn-svg edit" title="<?php esc_attr_e( 'Edit Exam', 'ifsedu-school-management' ); ?>">
                                         <span class="dashicons dashicons-edit" style="font-size:16px; width:16px; height:16px;"></span>
                                     </a>
+
+                                    <!-- Delete Button -->
                                     <a href="<?php echo esc_url( $del_url ); ?>" class="ifs-educore-action-btn-svg delete" title="<?php esc_attr_e( 'Delete Exam', 'ifsedu-school-management' ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this exam scheme permanently?', 'ifsedu-school-management' ) ); ?>');">
                                         <span class="dashicons dashicons-trash" style="font-size:16px; width:16px; height:16px;"></span>
                                     </a>

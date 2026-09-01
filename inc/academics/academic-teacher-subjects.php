@@ -21,6 +21,12 @@ function educore_teacher_subjects_view() {
     $table_units            = $wpdb->prefix . 'sms_academic_units';
     $table_teacher_subjects = $wpdb->prefix . 'sms_teacher_subjects';
 
+    // Auto-migrate column `role_type` if missing
+    $col_check = $wpdb->get_results( "SHOW COLUMNS FROM `{$table_teacher_subjects}` LIKE 'role_type'" );
+    if ( empty( $col_check ) ) {
+        $wpdb->query( "ALTER TABLE `{$table_teacher_subjects}` ADD COLUMN `role_type` varchar(50) DEFAULT 'Subject Teacher' NOT NULL AFTER `subject_id`" );
+    }
+
     $notice_msg = '';
 
     // Handle Form Submission
@@ -28,22 +34,19 @@ function educore_teacher_subjects_view() {
     if ( 'POST' === $req_method && isset( $_POST['assign_teacher_subject'] ) && check_admin_referer( 'assign_teacher_subject_action', 'educore_ts_nonce' ) ) {
         $teacher_id  = isset( $_POST['teacher_id'] ) ? absint( wp_unslash( $_POST['teacher_id'] ) ) : 0;
         $unit_id     = isset( $_POST['unit_id'] ) ? absint( wp_unslash( $_POST['unit_id'] ) ) : 0;
+        $role_type   = isset( $_POST['role_type'] ) && 'Class Teacher' === $_POST['role_type'] ? 'Class Teacher' : 'Subject Teacher';
         $subject_ids = ( isset( $_POST['subject_ids'] ) && is_array( $_POST['subject_ids'] ) ) ? array_map( 'absint', wp_unslash( $_POST['subject_ids'] ) ) : array();
 
-        if ( $teacher_id > 0 && $unit_id > 0 && ! empty( $subject_ids ) ) {
+        if ( $teacher_id > 0 && $unit_id > 0 ) {
             $assigned_count = 0;
-            foreach ( $subject_ids as $sub_id ) {
-                $sub_id_int = absint( $sub_id );
-                if ( $sub_id_int <= 0 ) {
-                    continue;
-                }
 
+            // If designated as Class Teacher without specific subjects, assign as primary class in-charge (subject_id = 0)
+            if ( 'Class Teacher' === $role_type && empty( $subject_ids ) ) {
                 $exists = (int) $wpdb->get_var(
                     $wpdb->prepare(
-                        "SELECT id FROM `{$table_teacher_subjects}` WHERE teacher_id = %d AND class_id = %d AND subject_id = %d LIMIT 1",
+                        "SELECT id FROM `{$table_teacher_subjects}` WHERE teacher_id = %d AND class_id = %d AND role_type = 'Class Teacher' LIMIT 1",
                         $teacher_id,
-                        $unit_id,
-                        $sub_id_int
+                        $unit_id
                     )
                 );
 
@@ -53,21 +56,61 @@ function educore_teacher_subjects_view() {
                         array(
                             'teacher_id' => $teacher_id,
                             'class_id'   => $unit_id,
-                            'subject_id' => $sub_id_int,
+                            'subject_id' => 0,
+                            'role_type'  => 'Class Teacher',
                         ),
-                        array( '%d', '%d', '%d' )
+                        array( '%d', '%d', '%d', '%s' )
                     );
                     $assigned_count++;
+                }
+            } else {
+                foreach ( $subject_ids as $sub_id ) {
+                    $sub_id_int = absint( $sub_id );
+                    if ( $sub_id_int <= 0 ) {
+                        continue;
+                    }
+
+                    $exists = (int) $wpdb->get_var(
+                        $wpdb->prepare(
+                            "SELECT id FROM `{$table_teacher_subjects}` WHERE teacher_id = %d AND class_id = %d AND subject_id = %d LIMIT 1",
+                            $teacher_id,
+                            $unit_id,
+                            $sub_id_int
+                        )
+                    );
+
+                    if ( $exists <= 0 ) {
+                        $wpdb->insert(
+                            $table_teacher_subjects,
+                            array(
+                                'teacher_id' => $teacher_id,
+                                'class_id'   => $unit_id,
+                                'subject_id' => $sub_id_int,
+                                'role_type'  => $role_type,
+                            ),
+                            array( '%d', '%d', '%d', '%s' )
+                        );
+                        $assigned_count++;
+                    } else {
+                        // Update existing role type if changed
+                        $wpdb->update(
+                            $table_teacher_subjects,
+                            array( 'role_type' => $role_type ),
+                            array( 'id' => $exists ),
+                            array( '%s' ),
+                            array( '%d' )
+                        );
+                    }
                 }
             }
 
             if ( $assigned_count > 0 ) {
                 if ( function_exists( 'educore_log_activity' ) ) {
-                    educore_log_activity( sprintf( __( 'Assigned %1$d subjects to teacher ID #%2$d', 'ifsedu-school-management' ), $assigned_count, $teacher_id ) );
+                    educore_log_activity( sprintf( __( 'Assigned %1$s to teacher ID #%2$d', 'ifsedu-school-management' ), $role_type, $teacher_id ) );
                 }
-                $notice_msg = sprintf( esc_html__( 'Successfully allocated %d subject(s) to the selected teacher.', 'ifsedu-school-management' ), $assigned_count );
+                $notice_msg = sprintf( esc_html__( 'Successfully allocated assignment(s) as %s.', 'ifsedu-school-management' ), esc_html( $role_type ) );
             } else {
-                $notice_msg = esc_html__( 'Selected subjects were already assigned to this teacher for this class & section.', 'ifsedu-school-management' );
+                $notice_msg = esc_html__( 'Teacher assignment already active for this class & section.', 'ifsedu-school-management' );
             }
         }
     }
@@ -83,7 +126,7 @@ function educore_teacher_subjects_view() {
             if ( function_exists( 'educore_log_activity' ) ) {
                 educore_log_activity( sprintf( __( 'Removed teacher assignment ID #%d', 'ifsedu-school-management' ), $assign_id ) );
             }
-            $notice_msg = esc_html__( 'Subject allocation removed successfully.', 'ifsedu-school-management' );
+            $notice_msg = esc_html__( 'Teacher allocation removed successfully.', 'ifsedu-school-management' );
         }
     }
 
@@ -106,15 +149,16 @@ function educore_teacher_subjects_view() {
 
     // Ordered by Class first (sort_order -> numeric class -> class name -> section), then subject order and teacher name
     $assignments = $wpdb->get_results( "
-        SELECT ts.id, ts.teacher_id, ts.class_id, ts.subject_id, t.full_name as teacher_name, t.designation, s.subject_name, s.subject_code, s.subject_order, u.class_name, u.section_name, u.sort_order as class_sort_order 
+        SELECT ts.id, ts.teacher_id, ts.class_id, ts.subject_id, ts.role_type, t.full_name as teacher_name, t.designation, 
+               s.subject_name, s.subject_code, s.subject_order, u.class_name, u.section_name, u.sort_order as class_sort_order 
         FROM `{$table_teacher_subjects}` ts
         INNER JOIN `{$table_staff}` t ON ts.teacher_id = t.id
-        INNER JOIN `{$table_subjects}` s ON ts.subject_id = s.id
+        LEFT JOIN `{$table_subjects}` s ON ts.subject_id = s.id
         INNER JOIN `{$table_units}` u ON ts.class_id = u.id
-        ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, s.subject_order ASC, s.subject_name ASC, t.full_name ASC
+        ORDER BY u.sort_order ASC, CAST(u.class_name AS UNSIGNED) ASC, u.class_name ASC, u.section_name ASC, ts.role_type DESC, s.subject_order ASC, s.subject_name ASC, t.full_name ASC
     " );
 
-    $unique_classes = array();
+    $unique_classes     = array();
     $class_sections_map = array();
 
     if ( ! empty( $units_raw ) && is_array( $units_raw ) ) {
@@ -258,6 +302,25 @@ function educore_teacher_subjects_view() {
             justify-content: center;
             flex-shrink: 0;
         }
+        .ifs-role-badge {
+            font-size: 11px;
+            font-weight: 800;
+            padding: 3px 8px;
+            border-radius: 5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .ifs-role-badge.badge-class-teacher {
+            background: #fef3c7;
+            color: #b45309;
+            border: 1px solid #fde68a;
+        }
+        .ifs-role-badge.badge-subject-teacher {
+            background: #f1f5f9;
+            color: #475569;
+            border: 1px solid #e2e8f0;
+        }
         .ifs-educore-matrix-table {
             width: 100%;
             border-collapse: separate;
@@ -311,11 +374,20 @@ function educore_teacher_subjects_view() {
         <div class="ifs-educore-ts-card" style="height: fit-content;">
             <h3 style="margin:0 0 16px 0; font-size:15px; font-weight:800; color:#0f172a; border-bottom:1px solid #f1f5f9; padding-bottom:12px; display:flex; align-items:center; gap:8px;">
                 <span class="dashicons dashicons-id-alt" style="color:#00523c;"></span>
-                <?php esc_html_e( 'Assign Subject to Teacher', 'ifsedu-school-management' ); ?>
+                <?php esc_html_e( 'Assign Teacher & Role', 'ifsedu-school-management' ); ?>
             </h3>
 
             <form method="POST" action="<?php echo esc_url( $base_url ); ?>" id="ifs_ts_quick_form">
                 <?php wp_nonce_field( 'assign_teacher_subject_action', 'educore_ts_nonce' ); ?>
+
+                <!-- Role Selection Dropdown -->
+                <div style="margin-bottom: 14px;">
+                    <label class="ifs-educore-field-label"><?php esc_html_e( 'Allocation Role', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
+                    <select name="role_type" id="ts_role_select" class="ifs-educore-field-select" required>
+                        <option value="Subject Teacher"><?php esc_html_e( 'Subject Teacher', 'ifsedu-school-management' ); ?></option>
+                        <option value="Class Teacher"><?php esc_html_e( 'Class Teacher (In-Charge)', 'ifsedu-school-management' ); ?></option>
+                    </select>
+                </div>
 
                 <!-- Step 1: Select Instructor -->
                 <div style="margin-bottom: 14px;">
@@ -354,9 +426,11 @@ function educore_teacher_subjects_view() {
                 </div>
 
                 <!-- Step 3: Subject Selection -->
-                <div style="margin-bottom: 18px;">
+                <div style="margin-bottom: 18px;" id="ts_subject_step_wrap">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <label class="ifs-educore-field-label" style="margin-bottom:0;"><?php esc_html_e( 'Available Subjects', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
+                        <label class="ifs-educore-field-label" style="margin-bottom:0;" id="ts_sub_label">
+                            <?php esc_html_e( 'Assigned Subjects', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;" id="ts_sub_required_star">*</span>
+                        </label>
                         <button type="button" id="btn_toggle_subjects" style="background:none; border:none; color:#00523c; font-size:11px; font-weight:700; cursor:pointer; display:none;">
                             <?php esc_html_e( 'Select All', 'ifsedu-school-management' ); ?>
                         </button>
@@ -371,15 +445,15 @@ function educore_teacher_subjects_view() {
 
                 <button type="submit" name="assign_teacher_subject" style="width:100%; height:42px; background:#00523c; color:#ffffff; font-weight:700; font-size:13.5px; border:none; border-radius:8px; cursor:pointer; box-shadow:0 4px 12px rgba(0,82,60,0.15); transition:background 0.2s;">
                     <span class="dashicons dashicons-saved" style="vertical-align:middle; font-size:16px;"></span>
-                    <?php esc_html_e( 'Confirm Subject Allocation', 'ifsedu-school-management' ); ?>
+                    <?php esc_html_e( 'Confirm Allocation', 'ifsedu-school-management' ); ?>
                 </button>
             </form>
         </div>
 
         <!-- Allocation Matrix Directory (Ordered by Class) -->
         <div class="ifs-educore-ts-card">
-            <div class="ifs-educore-card-header">
-                <h3 class="ifs-educore-card-title">
+            <div class="ifs-educore-card-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #f1f5f9; padding-bottom:12px; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+                <h3 class="ifs-educore-card-title" style="margin:0; font-size:15px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:8px;">
                     <span class="dashicons dashicons-networking" style="color:#00523c;"></span>
                     <?php esc_html_e( 'Instructor Allocation Matrix', 'ifsedu-school-management' ); ?>
                 </h3>
@@ -395,11 +469,12 @@ function educore_teacher_subjects_view() {
                 <table class="ifs-educore-matrix-table" id="ts_matrix_table">
                     <thead>
                         <tr>
-                            <th style="width: 20%;"><?php esc_html_e( 'Class', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 18%;"><?php esc_html_e( 'Section', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 24%;"><?php esc_html_e( 'Subject', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 28%;"><?php esc_html_e( 'Teacher', 'ifsedu-school-management' ); ?></th>
-                            <th style="width: 10%; text-align:right;"><?php esc_html_e( 'Action', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 18%;"><?php esc_html_e( 'Class', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 16%;"><?php esc_html_e( 'Section', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 18%;"><?php esc_html_e( 'Role', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 22%;"><?php esc_html_e( 'Subject', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 20%;"><?php esc_html_e( 'Teacher', 'ifsedu-school-management' ); ?></th>
+                            <th style="width: 6%; text-align:right;"><?php esc_html_e( 'Action', 'ifsedu-school-management' ); ?></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -408,8 +483,9 @@ function educore_teacher_subjects_view() {
                             $del_url = wp_nonce_url( add_query_arg( array( 'action' => 'delete_assignment', 'assign_id' => $assign_id ), $base_url ), 'delete_ts_' . $assign_id );
                             $section_display = ! empty( $row->section_name ) ? $row->section_name : '—';
                             $initial = ! empty( $row->teacher_name ) ? strtoupper( mb_substr( trim( $row->teacher_name ), 0, 1 ) ) : 'T';
+                            $is_class_teacher = ( 'Class Teacher' === ( $row->role_type ?? 'Subject Teacher' ) );
                         ?>
-                            <tr class="ts-matrix-row" data-searchable="<?php echo esc_attr( strtolower( (string) ( $row->class_name . ' ' . $row->section_name . ' ' . $row->subject_name . ' ' . $row->subject_code . ' ' . $row->teacher_name ) ) ); ?>">
+                            <tr class="ts-matrix-row" data-searchable="<?php echo esc_attr( strtolower( (string) ( $row->class_name . ' ' . $row->section_name . ' ' . ( $row->subject_name ?: 'Class Teacher In-Charge' ) . ' ' . $row->teacher_name . ' ' . ( $row->role_type ?? '' ) ) ) ); ?>">
                                 <td>
                                     <span style="background:#eff6ff; color:#2563eb; padding:2px 8px; border-radius:5px; font-weight:700; font-size:12px;">
                                         <?php echo esc_html( $row->class_name ); ?>
@@ -421,9 +497,28 @@ function educore_teacher_subjects_view() {
                                     </span>
                                 </td>
                                 <td>
-                                    <strong style="color:#00523c;"><?php echo esc_html( $row->subject_name ); ?></strong>
-                                    <?php if ( $row->subject_code ) : ?>
-                                        <code style="font-size:11px; background:#f1f5f9; padding:2px 4px; border-radius:4px; margin-left:4px;"><?php echo esc_html( $row->subject_code ); ?></code>
+                                    <?php if ( $is_class_teacher ) : ?>
+                                        <span class="ifs-role-badge badge-class-teacher">
+                                            <span class="dashicons dashicons-awards" style="font-size:13px; width:13px; height:13px;"></span>
+                                            <?php esc_html_e( 'Class Teacher', 'ifsedu-school-management' ); ?>
+                                        </span>
+                                    <?php else : ?>
+                                        <span class="ifs-role-badge badge-subject-teacher">
+                                            <span class="dashicons dashicons-book" style="font-size:13px; width:13px; height:13px;"></span>
+                                            <?php esc_html_e( 'Subject Teacher', 'ifsedu-school-management' ); ?>
+                                        </span>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ( ! empty( $row->subject_name ) ) : ?>
+                                        <strong style="color:#00523c;"><?php echo esc_html( $row->subject_name ); ?></strong>
+                                        <?php if ( $row->subject_code ) : ?>
+                                            <code style="font-size:11px; background:#f1f5f9; padding:2px 4px; border-radius:4px; margin-left:4px;"><?php echo esc_html( $row->subject_code ); ?></code>
+                                        <?php endif; ?>
+                                    <?php else : ?>
+                                        <span style="color:#b45309; font-weight:700; font-size:12px; font-style:italic;">
+                                            <?php esc_html_e( 'Class In-Charge (All Subjects)', 'ifsedu-school-management' ); ?>
+                                        </span>
                                     <?php endif; ?>
                                 </td>
                                 <td>
@@ -436,15 +531,15 @@ function educore_teacher_subjects_view() {
                                     </div>
                                 </td>
                                 <td style="text-align:right;">
-                                    <a href="<?php echo esc_url( $del_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Remove this subject allocation?', 'ifsedu-school-management' ) ); ?>');" class="ifs-educore-btn-del" title="<?php esc_attr_e( 'Delete Assignment', 'ifsedu-school-management' ); ?>">
+                                    <a href="<?php echo esc_url( $del_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Remove this allocation?', 'ifsedu-school-management' ) ); ?>');" class="ifs-educore-btn-del" title="<?php esc_attr_e( 'Delete Assignment', 'ifsedu-school-management' ); ?>">
                                         <span class="dashicons dashicons-trash" style="font-size:14px; width:14px; height:14px;"></span>
                                     </a>
                                 </td>
                             </tr>
                         <?php endforeach; else : ?>
                             <tr>
-                                <td colspan="5" style="padding:28px; text-align:center; color:#94a3b8;">
-                                    <?php esc_html_e( 'No subjects assigned to any instructor yet.', 'ifsedu-school-management' ); ?>
+                                <td colspan="6" style="padding:28px; text-align:center; color:#94a3b8;">
+                                    <?php esc_html_e( 'No instructors assigned to any class or subject yet.', 'ifsedu-school-management' ); ?>
                                 </td>
                             </tr>
                         <?php endif; ?>
@@ -470,6 +565,20 @@ function educore_teacher_subjects_view() {
         var subContainer = document.getElementById('ts_subjects_checkbox_box');
         var toggleSubBtn = document.getElementById('btn_toggle_subjects');
         var form = document.getElementById('ifs_ts_quick_form');
+
+        var roleSelect = document.getElementById('ts_role_select');
+        var subStar = document.getElementById('ts_sub_required_star');
+
+        // Role Dropdown Change Event
+        if (roleSelect) {
+            roleSelect.addEventListener('change', function() {
+                if (this.value === 'Class Teacher') {
+                    if (subStar) subStar.style.display = 'none';
+                } else {
+                    if (subStar) subStar.style.display = 'inline';
+                }
+            });
+        }
 
         // 1. Teacher Search Filter
         if (teacherSearch && teacherSelect) {
@@ -537,7 +646,7 @@ function educore_teacher_subjects_view() {
             });
 
             if (filtered.length === 0) {
-                subContainer.innerHTML = '<div style="text-align:center; padding:20px 10px; color:#dc2626; font-size:12px; font-weight:700;"><?php echo esc_js( __( 'No subjects found for this class & section. Add subjects first in Academics -> Class Wise Subjects.', 'ifsedu-school-management' ) ); ?></div>';
+                subContainer.innerHTML = '<div style="text-align:center; padding:20px 10px; color:#dc2626; font-size:12px; font-weight:700;"><?php echo esc_js( __( 'No subjects found for this class & section. (Optional for Class Teacher)', 'ifsedu-school-management' ) ); ?></div>';
                 toggleSubBtn.style.display = 'none';
                 return;
             }
@@ -592,9 +701,10 @@ function educore_teacher_subjects_view() {
         // 5. Form Validation
         if (form) {
             form.addEventListener('submit', function(e) {
+                var selectedRole = roleSelect ? roleSelect.value : 'Subject Teacher';
                 var checkedCount = subContainer.querySelectorAll('.cb-sub-item:checked').length;
-                if (checkedCount === 0) {
-                    alert('<?php echo esc_js( __( 'Please select at least one subject to allocate.', 'ifsedu-school-management' ) ); ?>');
+                if (selectedRole === 'Subject Teacher' && checkedCount === 0) {
+                    alert('<?php echo esc_js( __( 'Please select at least one subject to allocate for a Subject Teacher.', 'ifsedu-school-management' ) ); ?>');
                     e.preventDefault();
                 }
             });

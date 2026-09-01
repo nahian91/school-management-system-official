@@ -15,14 +15,15 @@ function educore_users_list_view() {
     }
 
     $all_users = get_users( array(
-        'role__in' => array( 'administrator', 'teacher', 'accountant', 'staff' ),
+        'role__in' => array( 'administrator', 'teacher', 'accountant', 'staff', 'governing_body' ),
         'orderby'  => 'registered',
         'order'    => 'DESC',
     ) );
 
-    $base_admin_url = admin_url( 'admin.php' );
+    $base_admin_url  = admin_url( 'admin.php' );
     $current_user_id = get_current_user_id();
-    $is_admin = current_user_can( 'manage_options' );
+    $is_admin        = current_user_can( 'manage_options' );
+    $is_governing    = current_user_can( 'governing_body' );
     ?>
     <div class="ifs-educore-bento-card">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; padding-bottom:14px; border-bottom:1px solid #f1f5f9;">
@@ -52,8 +53,8 @@ function educore_users_list_view() {
                 </thead>
                 <tbody>
                     <?php if ( ! empty( $all_users ) ) : foreach ( $all_users as $user_obj ) : 
-                        $user_roles   = (array) $user_obj->roles;
-                        $primary_role = ! empty( $user_roles ) ? $user_roles[0] : 'none';
+                        $user_roles      = (array) $user_obj->roles;
+                        $primary_role    = ! empty( $user_roles ) ? $user_roles[0] : 'none';
                         $is_target_admin = in_array( 'administrator', $user_roles, true );
                         
                         $badge_class = 'ifs-educore-role-default';
@@ -65,6 +66,8 @@ function educore_users_list_view() {
                             $badge_class = 'ifs-educore-role-accountant';
                         } elseif ( 'staff' === $primary_role ) {
                             $badge_class = 'ifs-educore-role-staff';
+                        } elseif ( 'governing_body' === $primary_role ) {
+                            $badge_class = 'ifs-educore-role-governing';
                         }
 
                         $user_edit_url = add_query_arg( array( 'page' => 'school_management_system', 'tab' => 'users', 'sub' => 'edit', 'id' => $user_obj->ID ), $base_admin_url );
@@ -81,6 +84,9 @@ function educore_users_list_view() {
                         $reg_time = ! empty( $user_obj->user_registered ) ? strtotime( $user_obj->user_registered ) : false;
                         $reg_date_formatted = $reg_time ? date_i18n( 'd M Y', $reg_time ) : '—';
                         $full_name_display = trim( (string) $user_obj->first_name . ' ' . (string) $user_obj->last_name );
+                        
+                        // Format role label cleanly
+                        $role_label = 'governing_body' === $primary_role ? 'Governing Body' : ucfirst( $primary_role );
                     ?>
                         <tr>
                             <td>
@@ -99,7 +105,7 @@ function educore_users_list_view() {
                             </td>
                             <td>
                                 <span class="ifs-educore-role-badge <?php echo esc_attr( $badge_class ); ?>">
-                                    <?php echo esc_html( ucfirst( $primary_role ) ); ?>
+                                    <?php echo esc_html( $role_label ); ?>
                                 </span>
                             </td>
                             <td>
@@ -109,16 +115,20 @@ function educore_users_list_view() {
                             </td>
                             <td style="text-align: right;">
                                 <div class="ifs-educore-action-group">
-                                    <?php if ( ! $is_target_admin || $is_admin ) : ?>
-                                        <a href="<?php echo esc_url( $user_edit_url ); ?>" class="ifs-educore-action-btn-sm edit" title="<?php esc_attr_e( 'Edit User', 'ifsedu-school-management' ); ?>">
-                                            <span class="dashicons dashicons-edit"></span>
-                                        </a>
-                                    <?php endif; ?>
+                                    <?php if ( ! $is_governing ) : ?>
+                                        <?php if ( ! $is_target_admin || $is_admin ) : ?>
+                                            <a href="<?php echo esc_url( $user_edit_url ); ?>" class="ifs-educore-action-btn-sm edit" title="<?php esc_attr_e( 'Edit User', 'ifsedu-school-management' ); ?>">
+                                                <span class="dashicons dashicons-edit"></span>
+                                            </a>
+                                        <?php endif; ?>
 
-                                    <?php if ( $user_obj->ID !== $current_user_id && ( ! $is_target_admin || $is_admin ) ) : ?>
-                                        <a href="<?php echo esc_url( $user_del_url ); ?>" class="ifs-educore-action-btn-sm delete" title="<?php esc_attr_e( 'Delete User', 'ifsedu-school-management' ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Are you sure you want to delete this user?', 'ifsedu-school-management' ) ); ?>');">
-                                            <span class="dashicons dashicons-trash"></span>
-                                        </a>
+                                        <?php if ( $user_obj->ID !== $current_user_id && ( ! $is_target_admin || $is_admin ) ) : ?>
+                                            <a href="<?php echo esc_url( $user_del_url ); ?>" class="ifs-educore-action-btn-sm delete" title="<?php esc_attr_e( 'Delete User', 'ifsedu-school-management' ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Are you sure you want to delete this user?', 'ifsedu-school-management' ) ); ?>');">
+                                                <span class="dashicons dashicons-trash"></span>
+                                            </a>
+                                        <?php endif; ?>
+                                    <?php else : ?>
+                                        <span style="color:#94a3b8; font-size:12px; font-style:italic;"><?php esc_html_e( 'View Only', 'ifsedu-school-management' ); ?></span>
                                     <?php endif; ?>
                                 </div>
                             </td>

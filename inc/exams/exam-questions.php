@@ -91,6 +91,31 @@ function educore_exam_questions_view() {
     $table_exams     = $wpdb->prefix . 'sms_exams';
     $table_units     = $wpdb->prefix . 'sms_academic_units';
 
+    // Auto-create questions table if not exists
+    $table_check = $wpdb->get_var( "SHOW TABLES LIKE '{$table_questions}'" );
+    if ( empty( $table_check ) ) {
+        $charset_collate = $wpdb->get_charset_collate();
+        $sql = "CREATE TABLE {$table_questions} (
+            id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+            exam_id bigint(20) unsigned NOT NULL,
+            class_name varchar(100) NOT NULL,
+            question_type varchar(20) DEFAULT 'CQ' NOT NULL,
+            subject_name varchar(255) NOT NULL,
+            subject_code varchar(50) DEFAULT '' NOT NULL,
+            exam_duration varchar(100) NOT NULL,
+            total_marks decimal(6,2) DEFAULT 70.00 NOT NULL,
+            instructions text NOT NULL,
+            cq_data longtext NOT NULL,
+            mcq_data longtext NOT NULL,
+            created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            PRIMARY KEY  (id),
+            KEY exam_id_idx (exam_id),
+            KEY class_name_idx (class_name)
+        ) {$charset_collate};";
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        dbDelta( $sql );
+    }
+
     // Dynamic Institutional Identity Settings
     $school_name    = get_option( 'educore_school_name', get_bloginfo( 'name' ) );
     $school_tagline = get_option( 'educore_school_tagline', '' );
@@ -119,7 +144,7 @@ function educore_exam_questions_view() {
     }
 
     if ( isset( $_GET['msg'] ) && 'deleted' === $_GET['msg'] ) {
-        $notice_msg = __( 'Question paper successfully deleted.', 'ifsedu-school-management' );
+        $notice_msg = __( 'Question paper successfully removed.', 'ifsedu-school-management' );
     }
     // phpcs:enable WordPress.Security.NonceVerification.Recommended
 
@@ -227,7 +252,7 @@ function educore_exam_questions_view() {
                 $notice_msg = esc_html__( 'Question paper updated successfully.', 'ifsedu-school-management' );
             } else {
                 $wpdb->insert( $table_questions, $data, $formats );
-                $notice_msg = esc_html__( 'New question paper saved successfully.', 'ifsedu-school-management' );
+                $notice_msg = esc_html__( 'New question paper generated and archived.', 'ifsedu-school-management' );
             }
             // phpcs:enable
         }
@@ -236,7 +261,19 @@ function educore_exam_questions_view() {
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $exams = $wpdb->get_results( "SELECT id, exam_name FROM `{$table_exams}` ORDER BY id DESC" );
 
-    $classes = $wpdb->get_col( "SELECT DISTINCT class_name FROM `{$table_units}` WHERE class_name != '' ORDER BY CAST(class_name AS UNSIGNED) ASC, class_name ASC" );
+    $raw_classes_data = $wpdb->get_results( 
+        "SELECT class_name, MIN(sort_order) as min_sort 
+         FROM `{$table_units}` 
+         WHERE class_name IS NOT NULL AND class_name != '' 
+         GROUP BY class_name 
+         ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
+    );
+    $classes = array();
+    if ( ! empty( $raw_classes_data ) ) {
+        foreach ( $raw_classes_data as $cr ) {
+            $classes[] = $cr->class_name;
+        }
+    }
 
     $saved_papers = $wpdb->get_results(
         "SELECT q.id, q.class_name, q.question_type, q.subject_name, q.subject_code, q.total_marks, q.created_at, e.exam_name 
@@ -247,73 +284,366 @@ function educore_exam_questions_view() {
     // phpcs:enable
     ?>
 
+    <style>
+        .ifs-educore-qp-root {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 10px 0 40px 0;
+        }
+
+        /* Repository Bento */
+        .ifs-qp-repo-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 20px 24px;
+            margin-bottom: 22px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.02);
+        }
+
+        /* Split Builder Workspace Layout */
+        .ifs-educore-qp-split-layout {
+            display: grid;
+            grid-template-columns: 480px 1fr;
+            gap: 22px;
+            align-items: flex-start;
+        }
+        @media (max-width: 1200px) {
+            .ifs-educore-qp-split-layout {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .ifs-qp-builder-card {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 14px;
+            padding: 24px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.02);
+        }
+
+        /* Segmented Controller */
+        .ifs-segmented-ctrl {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
+            background: #f1f5f9;
+            padding: 4px;
+            border-radius: 10px;
+            margin-bottom: 18px;
+        }
+        .ifs-segmented-opt {
+            padding: 8px 12px;
+            text-align: center;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 800;
+            color: #475569;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+        .ifs-segmented-opt.is-active {
+            background: #00523c;
+            color: #ffffff;
+            box-shadow: 0 2px 6px rgba(0, 82, 60, 0.2);
+        }
+
+        /* Question Item Repeater Blocks */
+        .ifs-educore-q-card {
+            background: #f8fafc;
+            border: 1.5px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px;
+            margin-bottom: 14px;
+            position: relative;
+            transition: border-color 0.2s;
+        }
+        .ifs-educore-q-card:hover {
+            border-color: #cbd5e1;
+            background: #ffffff;
+        }
+        .ifs-educore-q-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+
+        /* Sub-question Flex Grid */
+        .ifs-sub-q-builder-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        .ifs-sub-q-row-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* NCTB A4 Paper Standard Preview Canvas */
+        .ifs-educore-preview-sticky-wrapper {
+            position: sticky;
+            top: 35px;
+        }
+        .ifs-educore-preview-topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            padding: 12px 18px;
+            border-radius: 10px;
+            margin-bottom: 14px;
+        }
+
+        .nctb-qp-paper {
+            width: 100%;
+            background: #ffffff;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            padding: 30px 36px;
+            box-sizing: border-box;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06);
+            color: #000000;
+            font-family: 'Kalpurush', 'SolaimanLipi', 'SutonnyMJ', 'Nikosh', 'Arial', sans-serif;
+            line-height: 1.55;
+        }
+        .nctb-board-header {
+            text-align: center;
+            border-bottom: 2px solid #000000;
+            padding-bottom: 12px;
+            margin-bottom: 14px;
+        }
+        .nctb-brand-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        .nctb-logo-img {
+            max-height: 38px;
+            object-fit: contain;
+        }
+        .nctb-school-title {
+            margin: 0;
+            font-size: 22px;
+            font-weight: 900;
+            text-transform: uppercase;
+            letter-spacing: -0.2px;
+            color: #000;
+        }
+        .nctb-exam-title {
+            margin: 2px 0;
+            font-size: 16px;
+            font-weight: 800;
+        }
+        .nctb-subject-title {
+            margin: 2px 0;
+            font-size: 15px;
+            font-weight: 800;
+        }
+        .nctb-meta-line {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 13.5px;
+            font-weight: 800;
+            margin-top: 8px;
+            border-top: 1px dashed #000;
+            padding-top: 6px;
+        }
+        .nctb-instructions-box {
+            font-size: 12.5px;
+            font-weight: 700;
+            font-style: italic;
+            margin-bottom: 16px;
+            padding-bottom: 6px;
+            border-bottom: 1px solid #000;
+        }
+
+        /* CQ Item Preview Layout */
+        .nctb-cq-item {
+            margin-bottom: 20px;
+            page-break-inside: avoid;
+        }
+        .nctb-cq-stem-wrapper {
+            display: flex;
+            gap: 8px;
+            font-size: 14px;
+            text-align: justify;
+            margin-bottom: 8px;
+        }
+        .nctb-section-header {
+            text-align: center;
+            font-weight: 900;
+            font-size: 14px;
+            text-decoration: underline;
+            margin: 16px 0 10px 0;
+        }
+        .nctb-cq-figure {
+            text-align: center;
+            margin: 10px 0;
+        }
+        .nctb-cq-figure img {
+            max-height: 140px;
+            border: 1px solid #000;
+            padding: 4px;
+        }
+        .nctb-sub-questions-list {
+            padding-left: 22px;
+        }
+        .nctb-sub-q-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13.5px;
+            margin-bottom: 3px;
+        }
+        .nctb-sub-q-text {
+            font-weight: 700;
+        }
+        .nctb-sub-q-mark {
+            font-weight: 800;
+        }
+
+        /* MCQ Grid Layouts */
+        .bd-mcq-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            column-gap: 24px;
+            row-gap: 14px;
+        }
+        .bd-mcq-grid.layout-single-col {
+            grid-template-columns: 1fr;
+        }
+        .bd-mcq-item {
+            page-break-inside: avoid;
+            font-size: 13px;
+        }
+        .bd-mcq-options {
+            display: grid;
+            margin-top: 4px;
+            padding-left: 14px;
+            font-size: 12.5px;
+        }
+        .bd-mcq-options.cols-1 { grid-template-columns: 1fr; }
+        .bd-mcq-options.cols-2 { grid-template-columns: 1fr 1fr; column-gap: 8px; }
+        .bd-mcq-options.cols-4 { grid-template-columns: repeat(4, 1fr); column-gap: 6px; }
+
+        .bd-ans-key-tag {
+            display: inline-block;
+            background: #f0fdf4;
+            color: #047857;
+            border: 1px solid #a7f3d0;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 800;
+        }
+
+        /* Print Override */
+        @media print {
+            #adminmenuwrap, #adminmenuback, #wpadminbar, #wpfooter, .no-print {
+                display: none !important;
+            }
+            body, .ifs-educore-qp-root, .ifs-educore-qp-split-layout {
+                background: transparent !important;
+                padding: 0 !important;
+                margin: 0 !important;
+                display: block !important;
+            }
+            .ifs-educore-preview-sticky-wrapper {
+                position: static !important;
+            }
+            .nctb-qp-paper {
+                box-shadow: none !important;
+                border: none !important;
+                padding: 0 !important;
+                width: 100% !important;
+            }
+            .print-hide-ans {
+                display: none !important;
+            }
+        }
+    </style>
+
     <div class="ifs-educore-qp-root">
 
         <?php if ( ! empty( $notice_msg ) ) : ?>
-            <div style="background:#ecfdf5; color:#065f46; border-left:4px solid #00523c; padding:12px 16px; border-radius:8px; font-weight:700;">
-                <?php echo esc_html( $notice_msg ); ?>
+            <div class="no-print" style="background:#ecfdf5; color:#065f46; border-left:4px solid #00523c; padding:12px 16px; border-radius:8px; font-weight:700; margin-bottom:18px;">
+                <span class="dashicons dashicons-yes-alt" style="vertical-align:middle;"></span> <?php echo esc_html( $notice_msg ); ?>
             </div>
         <?php endif; ?>
 
         <!-- SAVED QUESTION REPOSITORY -->
-        <div class="ifs-educore-bento-card no-print">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-                <h4 style="margin:0; font-size:16px; font-weight:800; color:#00523c;">
-                    <span class="dashicons dashicons-search"></span> <?php esc_html_e( 'Saved Question Repository', 'ifsedu-school-management' ); ?>
+        <div class="ifs-qp-repo-card no-print">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:10px;">
+                <h4 style="margin:0; font-size:15.5px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:6px;">
+                    <span class="dashicons dashicons-database" style="color:#00523c;"></span>
+                    <?php esc_html_e( 'Institutional Question Paper Bank', 'ifsedu-school-management' ); ?>
                 </h4>
-                <span class="ifs-educore-badge-pill"><?php echo count( $saved_papers ); ?> <?php esc_html_e( 'Questions Saved', 'ifsedu-school-management' ); ?></span>
+                <span style="font-size:12px; font-weight:800; background:#f1f5f9; color:#475569; padding:4px 12px; border-radius:999px;">
+                    <?php echo count( $saved_papers ); ?> <?php esc_html_e( 'Question Papers Stored', 'ifsedu-school-management' ); ?>
+                </span>
             </div>
 
-            <div style="display:grid; grid-template-columns:2fr 1fr 1fr; gap:12px; margin-bottom:14px;">
-                <input type="text" id="filter_keyword" class="ifs-educore-input" placeholder="<?php esc_attr_e( 'Filter by subject or exam name...', 'ifsedu-school-management' ); ?>">
-                <select id="filter_class_search" class="ifs-educore-select">
+            <div style="display:grid; grid-template-columns: 2fr 1fr 1fr; gap:12px; margin-bottom:14px;">
+                <input type="text" id="filter_keyword" class="ifs-educore-input" placeholder="<?php esc_attr_e( 'Search paper by subject or exam title...', 'ifsedu-school-management' ); ?>" style="height:36px; font-size:13px;">
+                <select id="filter_class_search" class="ifs-educore-select" style="height:36px; font-size:13px;">
                     <option value=""><?php esc_html_e( '-- All Classes --', 'ifsedu-school-management' ); ?></option>
                     <?php foreach ( $classes as $c ) : ?>
                         <option value="<?php echo esc_attr( $c ); ?>"><?php echo esc_html( $c ); ?></option>
                     <?php endforeach; ?>
                 </select>
-                <select id="filter_type_search" class="ifs-educore-select">
-                    <option value=""><?php esc_html_e( '-- All Types --', 'ifsedu-school-management' ); ?></option>
+                <select id="filter_type_search" class="ifs-educore-select" style="height:36px; font-size:13px;">
+                    <option value=""><?php esc_html_e( '-- All Formats --', 'ifsedu-school-management' ); ?></option>
                     <option value="CQ"><?php esc_html_e( 'Creative (CQ)', 'ifsedu-school-management' ); ?></option>
                     <option value="MCQ"><?php esc_html_e( 'Multiple Choice (MCQ)', 'ifsedu-school-management' ); ?></option>
                 </select>
             </div>
 
-            <div style="max-height: 200px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:10px;">
-                <table class="ifs-educore-table" id="savedPapersTable">
+            <div style="max-height: 190px; overflow-y:auto; border:1.5px solid #e2e8f0; border-radius:10px;">
+                <table class="ifs-educore-table" id="savedPapersTable" style="width:100%; border-collapse:collapse; font-size:13px;">
                     <thead>
-                        <tr>
-                            <th><?php esc_html_e( 'Exam', 'ifsedu-school-management' ); ?></th>
-                            <th><?php esc_html_e( 'Class', 'ifsedu-school-management' ); ?></th>
-                            <th><?php esc_html_e( 'Type', 'ifsedu-school-management' ); ?></th>
-                            <th><?php esc_html_e( 'Subject (Code)', 'ifsedu-school-management' ); ?></th>
-                            <th><?php esc_html_e( 'Total Marks', 'ifsedu-school-management' ); ?></th>
-                            <th style="text-align:right;"><?php esc_html_e( 'Action', 'ifsedu-school-management' ); ?></th>
+                        <tr style="background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+                            <th style="padding:8px 12px;"><?php esc_html_e( 'Exam Scheme', 'ifsedu-school-management' ); ?></th>
+                            <th style="padding:8px 12px;"><?php esc_html_e( 'Class', 'ifsedu-school-management' ); ?></th>
+                            <th style="padding:8px 12px;"><?php esc_html_e( 'Format', 'ifsedu-school-management' ); ?></th>
+                            <th style="padding:8px 12px;"><?php esc_html_e( 'Subject', 'ifsedu-school-management' ); ?></th>
+                            <th style="padding:8px 12px;"><?php esc_html_e( 'Marks', 'ifsedu-school-management' ); ?></th>
+                            <th style="padding:8px 12px; text-align:right;"><?php esc_html_e( 'Action', 'ifsedu-school-management' ); ?></th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if ( ! empty( $saved_papers ) ) : foreach ( $saved_papers as $sp ) : 
                             $sp_id = absint( $sp->id );
                         ?>
-                            <tr data-class="<?php echo esc_attr( $sp->class_name ); ?>" data-type="<?php echo esc_attr( $sp->question_type ); ?>" data-text="<?php echo esc_attr( strtolower( (string) ( $sp->subject_name . ' ' . $sp->exam_name ) ) ); ?>">
-                                <td><strong><?php echo esc_html( $sp->exam_name ); ?></strong></td>
-                                <td><?php echo esc_html( $sp->class_name ); ?></td>
-                                <td><span class="ifs-educore-badge-pill"><?php echo esc_html( $sp->question_type ); ?></span></td>
-                                <td><?php echo esc_html( $sp->subject_name . ( $sp->subject_code ? ' (' . $sp->subject_code . ')' : '' ) ); ?></td>
-                                <td><?php echo esc_html( floatval( $sp->total_marks ) ); ?></td>
-                                <td style="text-align:right;">
-                                    <button type="button" class="ifs-educore-btn-action ifs-educore-btn-secondary btn-load-paper" data-id="<?php echo esc_attr( $sp_id ); ?>">
-                                        <span class="dashicons dashicons-edit"></span> <?php esc_html_e( 'Load', 'ifsedu-school-management' ); ?>
+                            <tr data-class="<?php echo esc_attr( $sp->class_name ); ?>" data-type="<?php echo esc_attr( $sp->question_type ); ?>" data-text="<?php echo esc_attr( strtolower( (string) ( $sp->subject_name . ' ' . $sp->exam_name ) ) ); ?>" style="border-bottom:1px solid #f1f5f9;">
+                                <td style="padding:8px 12px;"><strong><?php echo esc_html( $sp->exam_name ); ?></strong></td>
+                                <td style="padding:8px 12px;"><?php echo esc_html( $sp->class_name ); ?></td>
+                                <td style="padding:8px 12px;"><span style="background:<?php echo 'CQ' === $sp->question_type ? '#eff6ff' : '#f0fdf4'; ?>; color:<?php echo 'CQ' === $sp->question_type ? '#1d4ed8' : '#047857'; ?>; font-weight:800; font-size:11px; padding:2px 6px; border-radius:4px;"><?php echo esc_html( $sp->question_type ); ?></span></td>
+                                <td style="padding:8px 12px;"><?php echo esc_html( $sp->subject_name . ( $sp->subject_code ? ' (' . $sp->subject_code . ')' : '' ) ); ?></td>
+                                <td style="padding:8px 12px; font-weight:700;"><?php echo esc_html( floatval( $sp->total_marks ) ); ?></td>
+                                <td style="padding:8px 12px; text-align:right;">
+                                    <button type="button" class="btn-load-paper" data-id="<?php echo esc_attr( $sp_id ); ?>" style="background:#00523c; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:12px; font-weight:700; cursor:pointer;">
+                                        <span class="dashicons dashicons-edit" style="font-size:12px; width:12px; height:12px;"></span> <?php esc_html_e( 'Load', 'ifsedu-school-management' ); ?>
                                     </button>
                                     <a href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin.php?page=school_management_system&tab=exams&sub=questions&action=delete_paper&id=' . $sp_id ), 'delete_question_paper_' . $sp_id ) ); ?>" 
-                                       class="ifs-educore-btn-action ifs-educore-btn-danger"
+                                       style="color:#dc2626; text-decoration:none; padding:3px 6px; margin-left:4px;"
                                        onclick="return confirm('<?php echo esc_js( __( 'Are you sure you want to delete this question paper?', 'ifsedu-school-management' ) ); ?>');">
-                                        <span class="dashicons dashicons-trash"></span>
+                                        <span class="dashicons dashicons-trash" style="font-size:14px; width:14px; height:14px;"></span>
                                     </a>
                                 </td>
                             </tr>
                         <?php endforeach; else : ?>
-                            <tr><td colspan="6" style="text-align:center; color:#94a3b8; padding:18px;"><?php esc_html_e( 'No saved question papers found.', 'ifsedu-school-management' ); ?></td></tr>
+                            <tr><td colspan="6" style="text-align:center; color:#94a3b8; padding:20px;"><?php esc_html_e( 'No saved question papers in the repository.', 'ifsedu-school-management' ); ?></td></tr>
                         <?php endif; ?>
                     </tbody>
                 </table>
@@ -323,124 +653,128 @@ function educore_exam_questions_view() {
         <div class="ifs-educore-qp-split-layout">
             
             <!-- LEFT PANEL: QUESTION BUILDER FORM -->
-            <div class="ifs-educore-bento-card no-print">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-                    <h3 style="margin:0; color:#00523c; font-size:17px; font-weight:800;">
-                        <span class="dashicons dashicons-welcome-write-blog"></span>
-                        <?php esc_html_e( 'Question Paper Builder', 'ifsedu-school-management' ); ?>
+            <div class="ifs-qp-builder-card no-print">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #f1f5f9; padding-bottom:12px;">
+                    <h3 style="margin:0; color:#0f172a; font-size:16px; font-weight:800; display:flex; align-items:center; gap:6px;">
+                        <span class="dashicons dashicons-welcome-write-blog" style="color:#00523c;"></span>
+                        <?php esc_html_e( 'Question Paper Designer', 'ifsedu-school-management' ); ?>
                     </h3>
-                    <div style="display:flex; gap:6px;">
-                        <button type="button" class="ifs-educore-btn-action ifs-educore-btn-secondary" id="btnResetForm">
-                            <span class="dashicons dashicons-plus-alt"></span> <?php esc_html_e( 'New Draft', 'ifsedu-school-management' ); ?>
-                        </button>
-                    </div>
+                    <button type="button" id="btnResetForm" style="background:#f1f5f9; border:1px solid #cbd5e1; color:#475569; padding:5px 12px; border-radius:6px; font-weight:700; font-size:12px; cursor:pointer;">
+                        <span class="dashicons dashicons-plus-alt" style="font-size:13px; width:13px; height:13px;"></span> <?php esc_html_e( 'New Draft', 'ifsedu-school-management' ); ?>
+                    </button>
                 </div>
 
                 <form method="POST" action="" id="dptQuestionForm">
                     <?php wp_nonce_field( 'save_question_paper_action', 'ifs_educore_question_nonce' ); ?>
                     <input type="hidden" name="paper_id" id="inp_paper_id" value="0">
 
-                    <div class="ifs-educore-form-grid">
-                        <div class="ifs-educore-form-group">
-                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Exam', 'ifsedu-school-management' ); ?></label>
-                            <select name="exam_id" id="inp_exam_id" class="ifs-educore-select" required>
+                    <!-- Question Type Segmented Switch -->
+                    <div class="ifs-segmented-ctrl">
+                        <div class="ifs-segmented-opt is-active" id="opt_type_cq" data-type="CQ">
+                            <span class="dashicons dashicons-media-document"></span>
+                            <?php esc_html_e( 'Creative (CQ / সৃজনশীল)', 'ifsedu-school-management' ); ?>
+                        </div>
+                        <div class="ifs-segmented-opt" id="opt_type_mcq" data-type="MCQ">
+                            <span class="dashicons dashicons-editor-ol"></span>
+                            <?php esc_html_e( 'Objective (MCQ / নৈর্ব্যক্তিক)', 'ifsedu-school-management' ); ?>
+                        </div>
+                    </div>
+                    <input type="hidden" name="question_type" id="inp_question_type" value="CQ">
+
+                    <!-- Academic Configurations -->
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+                        <div>
+                            <label style="font-size:12px; font-weight:700; color:#475569; display:block; margin-bottom:4px;"><?php esc_html_e( 'Target Exam', 'ifsedu-school-management' ); ?> *</label>
+                            <select name="exam_id" id="inp_exam_id" class="ifs-educore-select" style="width:100%; height:38px;" required>
                                 <?php foreach ( $exams as $ex ) : ?>
                                     <option value="<?php echo absint( $ex->id ); ?>"><?php echo esc_html( $ex->exam_name ); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
 
-                        <div class="ifs-educore-form-group">
-                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Class', 'ifsedu-school-management' ); ?></label>
-                            <select name="class_name" id="inp_class_name" class="ifs-educore-select" required>
+                        <div>
+                            <label style="font-size:12px; font-weight:700; color:#475569; display:block; margin-bottom:4px;"><?php esc_html_e( 'Academic Class', 'ifsedu-school-management' ); ?> *</label>
+                            <select name="class_name" id="inp_class_name" class="ifs-educore-select" style="width:100%; height:38px;" required>
                                 <option value=""><?php esc_html_e( '-- Select Class --', 'ifsedu-school-management' ); ?></option>
                                 <?php foreach ( $classes as $c ) : ?>
                                     <option value="<?php echo esc_attr( $c ); ?>"><?php echo esc_html( $c ); ?></option>
                                 <?php endforeach; ?>
                             </select>
                         </div>
+                    </div>
 
-                        <div class="ifs-educore-form-group">
-                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Question Type', 'ifsedu-school-management' ); ?></label>
-                            <select name="question_type" id="inp_question_type" class="ifs-educore-select" style="font-weight:800; color:#00523c;" required>
-                                <option value="CQ"><?php esc_html_e( 'Creative Question (CQ)', 'ifsedu-school-management' ); ?></option>
-                                <option value="MCQ"><?php esc_html_e( 'Multiple Choice (MCQ)', 'ifsedu-school-management' ); ?></option>
-                            </select>
-                        </div>
-
-                        <div class="ifs-educore-form-group">
-                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Subject', 'ifsedu-school-management' ); ?></label>
-                            <select name="subject_dropdown" id="inp_subject_dropdown" class="ifs-educore-select">
+                    <div style="display:grid; grid-template-columns:2fr 1fr; gap:12px; margin-bottom:12px;">
+                        <div>
+                            <label style="font-size:12px; font-weight:700; color:#475569; display:block; margin-bottom:4px;"><?php esc_html_e( 'Subject', 'ifsedu-school-management' ); ?> *</label>
+                            <select name="subject_dropdown" id="inp_subject_dropdown" class="ifs-educore-select" style="width:100%; height:38px;">
                                 <option value=""><?php esc_html_e( '-- Select Class First --', 'ifsedu-school-management' ); ?></option>
                             </select>
                             <input type="hidden" name="subject_name" id="inp_subject_name" value="">
                         </div>
 
-                        <div class="ifs-educore-form-group">
-                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Subject Code', 'ifsedu-school-management' ); ?></label>
-                            <input type="text" name="subject_code" id="inp_subject_code" class="ifs-educore-input" placeholder="<?php esc_attr_e( 'e.g. 101', 'ifsedu-school-management' ); ?>">
-                        </div>
-
-                        <div class="ifs-educore-form-group">
-                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Duration', 'ifsedu-school-management' ); ?></label>
-                            <input type="text" name="exam_duration" id="inp_exam_duration" class="ifs-educore-input" value="২ ঘণ্টা ৩০ মিনিট">
-                        </div>
-
-                        <div class="ifs-educore-form-group">
-                            <label class="ifs-educore-form-label"><?php esc_html_e( 'Total Marks', 'ifsedu-school-management' ); ?></label>
-                            <input type="number" step="0.5" name="total_marks" id="inp_total_marks" class="ifs-educore-input" value="70" style="font-weight:800; color:#00523c;">
+                        <div>
+                            <label style="font-size:12px; font-weight:700; color:#475569; display:block; margin-bottom:4px;"><?php esc_html_e( 'Subject Code', 'ifsedu-school-management' ); ?></label>
+                            <input type="text" name="subject_code" id="inp_subject_code" class="ifs-educore-input" style="width:100%; height:38px;" placeholder="১০১">
                         </div>
                     </div>
 
-                    <div class="ifs-educore-form-group" style="margin-bottom: 16px;">
-                        <label class="ifs-educore-form-label"><?php esc_html_e( 'General Instructions', 'ifsedu-school-management' ); ?></label>
-                        <textarea name="instructions" id="inp_instructions" class="ifs-educore-textarea" rows="2">[দ্রষ্টব্য: ডান পাশের সংখ্যা প্রশ্নের পূর্ণমান জ্ঞাপক। প্রদত্ত উদ্দীপকগুলো মনোযোগ সহকারে পড়ে সংশ্লিষ্ট প্রশ্নের উত্তর দাও।</textarea>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+                        <div>
+                            <label style="font-size:12px; font-weight:700; color:#475569; display:block; margin-bottom:4px;"><?php esc_html_e( 'Duration', 'ifsedu-school-management' ); ?></label>
+                            <input type="text" name="exam_duration" id="inp_exam_duration" class="ifs-educore-input" style="width:100%; height:38px;" value="২ ঘণ্টা ৩০ মিনিট">
+                        </div>
+
+                        <div>
+                            <label style="font-size:12px; font-weight:700; color:#475569; display:block; margin-bottom:4px;"><?php esc_html_e( 'Total Marks', 'ifsedu-school-management' ); ?> *</label>
+                            <input type="number" step="0.5" name="total_marks" id="inp_total_marks" class="ifs-educore-input" style="width:100%; height:38px; font-weight:800; color:#00523c;" value="70">
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 16px;">
+                        <label style="font-size:12px; font-weight:700; color:#475569; display:block; margin-bottom:4px;"><?php esc_html_e( 'Exam Instructions (Bangla/English)', 'ifsedu-school-management' ); ?></label>
+                        <textarea name="instructions" id="inp_instructions" class="ifs-educore-textarea" rows="2" style="width:100%; font-size:13px;">[দ্রষ্টব্য: ডান পাশের সংখ্যা প্রশ্নের পূর্ণমান জ্ঞাপক। প্রদত্ত উদ্দীপকগুলো মনোযোগ সহকারে পড়ে সংশ্লিষ্ট প্রশ্নের উত্তর দাও।]</textarea>
                     </div>
 
                     <!-- 1. CQ BUILDER SECTION -->
                     <div id="section_cq_builder">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                            <h4 style="margin:0; font-size:14px; font-weight:800; color:#0f172a;"><?php esc_html_e( 'Creative Questions (CQ)', 'ifsedu-school-management' ); ?></h4>
-                            <span style="font-size:11.5px; font-weight:700; color:#64748b;" id="lbl_cq_count"><?php esc_html_e( 'Total Questions: 0', 'ifsedu-school-management' ); ?></span>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding:6px 0; border-top:1px solid #f1f5f9;">
+                            <strong style="font-size:13.5px; color:#0f172a;"><?php esc_html_e( 'Creative Questions Structure', 'ifsedu-school-management' ); ?></strong>
+                            <span style="font-size:12px; font-weight:800; color:#00523c;" id="lbl_cq_count">মোট প্রশ্ন: ০</span>
                         </div>
 
                         <div id="cq-repeater-container"></div>
 
-                        <div style="display:flex; gap:8px; margin-top:10px;">
-                            <button type="button" class="ifs-educore-btn-action ifs-educore-btn-secondary" id="btnAddCQ">
-                                <span class="dashicons dashicons-plus-alt2"></span> <?php esc_html_e( 'Add New Question', 'ifsedu-school-management' ); ?>
-                            </button>
-                        </div>
+                        <button type="button" id="btnAddCQ" style="width:100%; height:38px; background:#f8fafc; border:1.5px dashed #00523c; color:#00523c; font-weight:800; border-radius:8px; cursor:pointer; margin-top:8px;">
+                            <span class="dashicons dashicons-plus-alt2" style="vertical-align:middle;"></span> <?php esc_html_e( 'Add Creative Question (CQ)', 'ifsedu-school-management' ); ?>
+                        </button>
                     </div>
 
                     <!-- 2. MCQ BUILDER SECTION -->
                     <div id="section_mcq_builder" style="display:none;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-                            <h4 style="margin:0; font-size:14px; font-weight:800; color:#0f172a;"><?php esc_html_e( 'Multiple Choice Questions (MCQ)', 'ifsedu-school-management' ); ?></h4>
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; padding:6px 0; border-top:1px solid #f1f5f9; flex-wrap:wrap; gap:8px;">
+                            <strong style="font-size:13.5px; color:#0f172a;"><?php esc_html_e( 'MCQ Questions Matrix', 'ifsedu-school-management' ); ?></strong>
                             <div style="display:flex; align-items:center; gap:10px;">
-                                <label style="font-size:12px; font-weight:700; color:#475569; display:inline-flex; align-items:center; gap:4px;">
-                                    <span><?php esc_html_e( 'Page Layout:', 'ifsedu-school-management' ); ?></span>
-                                    <select id="sel_mcq_page_layout" class="ifs-educore-select" style="width:110px; height:28px; font-size:12px;">
-                                        <option value="2"><?php esc_html_e( '2 Column Page', 'ifsedu-school-management' ); ?></option>
-                                        <option value="1"><?php esc_html_e( '1 Column Page', 'ifsedu-school-management' ); ?></option>
+                                <label style="font-size:12px; font-weight:700; color:#475569;">
+                                    <?php esc_html_e( 'Grid Layout:', 'ifsedu-school-management' ); ?>
+                                    <select id="sel_mcq_page_layout" style="height:28px; font-size:12px; border:1px solid #cbd5e1; border-radius:5px;">
+                                        <option value="2"><?php esc_html_e( '2 Column (A4)', 'ifsedu-school-management' ); ?></option>
+                                        <option value="1"><?php esc_html_e( '1 Column', 'ifsedu-school-management' ); ?></option>
                                     </select>
                                 </label>
-                                <span style="font-size:11.5px; font-weight:700; color:#64748b;" id="lbl_mcq_count"><?php esc_html_e( 'Total Questions: 0', 'ifsedu-school-management' ); ?></span>
+                                <span style="font-size:12px; font-weight:800; color:#00523c;" id="lbl_mcq_count">মোট প্রশ্ন: ০</span>
                             </div>
                         </div>
 
                         <div id="mcq-repeater-container"></div>
 
-                        <div style="display:flex; gap:8px; margin-top:10px;">
-                            <button type="button" class="ifs-educore-btn-action ifs-educore-btn-secondary" id="btnAddMCQ">
-                                <span class="dashicons dashicons-plus-alt2"></span> <?php esc_html_e( 'Add New MCQ', 'ifsedu-school-management' ); ?>
-                            </button>
-                        </div>
+                        <button type="button" id="btnAddMCQ" style="width:100%; height:38px; background:#f8fafc; border:1.5px dashed #00523c; color:#00523c; font-weight:800; border-radius:8px; cursor:pointer; margin-top:8px;">
+                            <span class="dashicons dashicons-plus-alt2" style="vertical-align:middle;"></span> <?php esc_html_e( 'Add Multiple Choice Question (MCQ)', 'ifsedu-school-management' ); ?>
+                        </button>
                     </div>
 
-                    <div style="text-align:right; margin-top:20px; border-top:1px solid #f1f5f9; padding-top:16px;">
-                        <button type="submit" name="educore_save_question_paper" class="ifs-educore-btn-action ifs-educore-btn-primary" style="height:38px; padding:0 22px; font-size:13.5px;">
-                            <span class="dashicons dashicons-saved"></span> <?php esc_html_e( 'Save & Update Question Paper', 'ifsedu-school-management' ); ?>
+                    <div style="text-align:right; margin-top:24px; border-top:1px solid #f1f5f9; padding-top:16px;">
+                        <button type="submit" name="educore_save_question_paper" style="width:100%; height:44px; background:#00523c; color:#fff; font-weight:800; font-size:14px; border:none; border-radius:8px; cursor:pointer; box-shadow:0 4px 12px rgba(0,82,60,0.2);">
+                            <span class="dashicons dashicons-saved" style="vertical-align:middle;"></span> <?php esc_html_e( 'Save & Publish Question Paper', 'ifsedu-school-management' ); ?>
                         </button>
                     </div>
                 </form>
@@ -449,16 +783,16 @@ function educore_exam_questions_view() {
             <!-- RIGHT PANEL: LIVE DYNAMIC A4 PREVIEW & PRINT -->
             <div class="ifs-educore-preview-sticky-wrapper">
                 <div class="ifs-educore-preview-topbar no-print">
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="font-size:13px; font-weight:800; color:#0f172a;">
-                            <span class="dashicons dashicons-visibility" style="vertical-align:middle;"></span> <?php esc_html_e( 'A4 Live Preview', 'ifsedu-school-management' ); ?>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span style="font-size:13.5px; font-weight:800; color:#0f172a; display:flex; align-items:center; gap:6px;">
+                            <span class="dashicons dashicons-visibility" style="color:#00523c;"></span> <?php esc_html_e( 'A4 Paper Preview', 'ifsedu-school-management' ); ?>
                         </span>
                         <label style="font-size:12px; font-weight:700; color:#475569; display:inline-flex; align-items:center; gap:4px; cursor:pointer;" id="lblToggleAnsKey">
                             <input type="checkbox" id="chkShowAnsKey"> <?php esc_html_e( 'Show Answer Key', 'ifsedu-school-management' ); ?>
                         </label>
                     </div>
-                    <button type="button" onclick="window.print();" class="ifs-educore-btn-action ifs-educore-btn-primary" style="background:#059669;">
-                        <span class="dashicons dashicons-printer"></span> <?php esc_html_e( 'Print (A4)', 'ifsedu-school-management' ); ?>
+                    <button type="button" onclick="window.print();" style="background:#00523c; color:#fff; border:none; padding:8px 18px; border-radius:6px; font-weight:700; font-size:13px; cursor:pointer; display:inline-flex; align-items:center; gap:6px;">
+                        <span class="dashicons dashicons-printer"></span> <?php esc_html_e( 'Print Question Paper', 'ifsedu-school-management' ); ?>
                     </button>
                 </div>
 
@@ -472,7 +806,7 @@ function educore_exam_questions_view() {
                             <h2 class="nctb-school-title" id="pv_school_name"><?php echo esc_html( $school_name ); ?></h2>
                         </div>
                         <?php if ( ! empty( $school_tagline ) ) : ?>
-                            <div style="font-size: 11.5px; color: #475569; font-weight: 600; margin-bottom: 4px;">
+                            <div style="font-size: 11.5px; color: #475569; font-weight: 700; margin-bottom: 4px; text-transform: uppercase;">
                                 <?php echo esc_html( $school_tagline ); ?>
                             </div>
                         <?php endif; ?>
@@ -481,12 +815,12 @@ function educore_exam_questions_view() {
                             <span id="pv_class_name"><?php esc_html_e( 'Class', 'ifsedu-school-management' ); ?></span> &mdash; <span id="pv_subject_name"><?php esc_html_e( 'Subject', 'ifsedu-school-management' ); ?></span>
                         </h4>
                         <div id="pv_code_box" style="font-size: 13px; font-weight: 700; margin-top: 2px;">
-                            <?php esc_html_e( 'Subject Code:', 'ifsedu-school-management' ); ?> <span id="pv_subject_code">১০১</span>
+                            <?php esc_html_e( 'বিষয় কোড:', 'ifsedu-school-management' ); ?> <span id="pv_subject_code">১০১</span>
                         </div>
                         <div class="nctb-meta-line">
-                            <span><?php esc_html_e( 'Time:', 'ifsedu-school-management' ); ?> <span id="pv_duration">২ ঘণ্টা ৩০ মিনিট</span></span>
-                            <span id="pv_type_badge"><?php esc_html_e( 'Creative Question', 'ifsedu-school-management' ); ?></span>
-                            <span><?php esc_html_e( 'Full Marks:', 'ifsedu-school-management' ); ?> <span id="pv_total_marks">৭০</span></span>
+                            <span><?php esc_html_e( 'সময়:', 'ifsedu-school-management' ); ?> <span id="pv_duration">২ ঘণ্টা ৩০ মিনিট</span></span>
+                            <span id="pv_type_badge"><?php esc_html_e( 'সৃজনশীল প্রশ্ন', 'ifsedu-school-management' ); ?></span>
+                            <span><?php esc_html_e( 'পূর্ণমান:', 'ifsedu-school-management' ); ?> <span id="pv_total_marks">৭০</span></span>
                         </div>
                     </div>
 
@@ -510,7 +844,7 @@ function educore_exam_questions_view() {
 
     </div>
 
-    <!-- Live Preview, Auto-load & Repeater Engine Script -->
+    <!-- Client-Side Realtime Execution -->
     <script type="text/javascript">
     document.addEventListener('DOMContentLoaded', function() {
         var ajaxNonce = '<?php echo esc_js( wp_create_nonce( "ifs_educore_qp_ajax_nonce" ) ); ?>';
@@ -526,13 +860,48 @@ function educore_exam_questions_view() {
         var subNameHidden = document.getElementById('inp_subject_name');
         var codeInput     = document.getElementById('inp_subject_code');
         var marksInput    = document.getElementById('inp_total_marks');
-        var qTypeSelect   = document.getElementById('inp_question_type');
+        var qTypeHidden   = document.getElementById('inp_question_type');
         var cqContainer   = document.getElementById('cq-repeater-container');
         var mcqContainer  = document.getElementById('mcq-repeater-container');
 
         var loadedSubjectsMap = {};
 
-        // 1. Dynamic Auto-load Subjects
+        // Type Segmented Toggle Handlers
+        var typeTabs = document.querySelectorAll('.ifs-segmented-opt');
+        typeTabs.forEach(function(tab) {
+            tab.addEventListener('click', function() {
+                typeTabs.forEach(function(t) { t.classList.remove('is-active'); });
+                this.classList.add('is-active');
+                
+                var chosenType = this.getAttribute('data-type');
+                qTypeHidden.value = chosenType;
+                
+                var cqBox  = document.getElementById('section_cq_builder');
+                var mcqBox = document.getElementById('section_mcq_builder');
+
+                if (chosenType === 'MCQ') {
+                    cqBox.style.display  = 'none';
+                    mcqBox.style.display = 'block';
+                    document.getElementById('inp_instructions').value = '[দ্রষ্টব্য: সকল প্রশ্নের উত্তর দিতে হবে। ডান পাশের সংখ্যা প্রশ্নের পূর্ণমান জ্ঞাপক।]';
+                    document.getElementById('inp_exam_duration').value = '৩০ মিনিট';
+                } else {
+                    cqBox.style.display  = 'block';
+                    mcqBox.style.display = 'none';
+                    document.getElementById('inp_instructions').value = '[দ্রষ্টব্য: ডান পাশের সংখ্যা প্রশ্নের পূর্ণমান জ্ঞাপক। প্রদত্ত উদ্দীপকগুলো মনোযোগ সহকারে পড়ে সংশ্লিষ্ট প্রশ্নের উত্তর দাও।]';
+                    document.getElementById('inp_exam_duration').value = '২ ঘণ্টা ৩০ মিনিট';
+                }
+
+                var activeSub = subNameHidden.value;
+                if (activeSub && loadedSubjectsMap[activeSub]) {
+                    var subObj = loadedSubjectsMap[activeSub];
+                    marksInput.value = (chosenType === 'MCQ') ? (subObj.mcq_marks || 30) : (subObj.cq_marks || 70);
+                }
+
+                updateLivePreview();
+            });
+        });
+
+        // Dynamic Subject Loading
         if (classSelect) {
             classSelect.addEventListener('change', function() {
                 var selectedClass = this.value;
@@ -576,7 +945,7 @@ function educore_exam_questions_view() {
                     var subObj = loadedSubjectsMap[subName];
                     if (codeInput) codeInput.value = subObj.subject_code || '';
 
-                    var currentType = qTypeSelect.value;
+                    var currentType = qTypeHidden.value;
                     if (currentType === 'CQ') {
                         marksInput.value = parseFloat(subObj.cq_marks) > 0 ? subObj.cq_marks : (subObj.total_marks || 70);
                     } else {
@@ -587,35 +956,7 @@ function educore_exam_questions_view() {
             });
         }
 
-        if (qTypeSelect) {
-            qTypeSelect.addEventListener('change', function() {
-                var qType  = this.value;
-                var cqBox  = document.getElementById('section_cq_builder');
-                var mcqBox = document.getElementById('section_mcq_builder');
-
-                if (qType === 'MCQ') {
-                    cqBox.style.display  = 'none';
-                    mcqBox.style.display = 'block';
-                    document.getElementById('inp_instructions').value = '[দ্রষ্টব্য: সকল প্রশ্নের উত্তর দিতে হবে। ডান পাশের সংখ্যা প্রশ্নের পূর্ণমান জ্ঞাপক।]';
-                    document.getElementById('inp_exam_duration').value = '৩০ মিনিট';
-                } else {
-                    cqBox.style.display  = 'block';
-                    mcqBox.style.display = 'none';
-                    document.getElementById('inp_instructions').value = '[দ্রষ্টব্য: ডান পাশের সংখ্যা প্রশ্নের পূর্ণমান জ্ঞাপক। প্রদত্ত উদ্দীপকগুলো মনোযোগ সহকারে পড়ে সংশ্লিষ্ট প্রশ্নের উত্তর দাও।]';
-                    document.getElementById('inp_exam_duration').value = '২ ঘণ্টা ৩০ মিনিট';
-                }
-
-                var activeSub = subNameHidden.value;
-                if (activeSub && loadedSubjectsMap[activeSub]) {
-                    var subObj = loadedSubjectsMap[activeSub];
-                    marksInput.value = (qType === 'MCQ') ? (subObj.mcq_marks || 30) : (subObj.cq_marks || 70);
-                }
-
-                updateLivePreview();
-            });
-        }
-
-        // 2. CQ Question Card Generator
+        // CQ Card Element Creator
         function createCQCard(data, num) {
             data = data || {};
             num  = num || 1;
@@ -623,47 +964,48 @@ function educore_exam_questions_view() {
             div.className = 'ifs-educore-q-card cq-item';
             div.innerHTML = `
                 <div class="ifs-educore-q-card-header">
-                    <strong class="cq-item-num"><?php echo esc_js( __( 'Question No.', 'ifsedu-school-management' ) ); ?> ${toBn(num)}</strong>
+                    <strong class="cq-item-num" style="color:#00523c; font-size:13.5px;"><?php echo esc_js( __( 'Question No.', 'ifsedu-school-management' ) ); ?> ${toBn(num)}</strong>
                     <div style="display:flex; align-items:center; gap:8px;" onclick="event.stopPropagation();">
-                        <input type="text" name="cq_section[]" class="ifs-educore-input cq-inp-sec" style="width:130px; height:28px; font-size:12px;" placeholder="<?php esc_attr_e( "Section (e.g. 'A')", 'ifsedu-school-management' ); ?>" value="${data.section || ''}">
-                        <button type="button" class="ifs-educore-btn-action ifs-educore-btn-danger btn-remove-cq">&times;</button>
+                        <input type="text" name="cq_section[]" class="ifs-educore-input cq-inp-sec" style="width:130px; height:28px; font-size:12px;" placeholder="<?php esc_attr_e( "Section (e.g. 'ক-বিভাগ')", 'ifsedu-school-management' ); ?>" value="${data.section || ''}">
+                        <button type="button" class="btn-remove-cq" style="background:#fee2e2; color:#dc2626; border:1px solid #fecaca; border-radius:5px; padding:3px 8px; cursor:pointer; font-weight:800;">&times;</button>
                     </div>
                 </div>
-                <div class="ifs-educore-q-card-body">
-                    <div class="ifs-educore-form-group" style="margin-bottom:8px;">
-                        <label class="ifs-educore-form-label"><?php echo esc_js( __( 'Stem / Stimulus', 'ifsedu-school-management' ) ); ?></label>
-                        <textarea name="cq_stem[]" class="ifs-educore-textarea cq-inp-stem" rows="2" placeholder="<?php esc_attr_e( 'Write the stem text here...', 'ifsedu-school-management' ); ?>">${data.stem || ''}</textarea>
+                <div>
+                    <div style="margin-bottom:8px;">
+                        <textarea name="cq_stem[]" class="ifs-educore-textarea cq-inp-stem" rows="2" style="width:100%; font-size:13px;" placeholder="<?php esc_attr_e( 'Write the stimulus / stem text here...', 'ifsedu-school-management' ); ?>">${data.stem || ''}</textarea>
                     </div>
-                    <div class="ifs-educore-image-attach-box">
-                        <img src="${data.image || ''}" class="ifs-educore-attach-preview cq-img-preview" alt="Diagram" style="${data.image ? 'display:block;' : 'display:none;'}">
+                    <div class="ifs-educore-image-attach-box" style="margin-bottom:8px; display:flex; align-items:center; gap:8px;">
+                        <img src="${data.image || ''}" class="cq-img-preview" alt="Diagram" style="max-height:40px; border:1px solid #cbd5e1; border-radius:4px; ${data.image ? 'display:block;' : 'display:none;'}">
                         <input type="hidden" name="cq_image_url[]" class="cq-inp-img-url" value="${data.image || ''}">
-                        <button type="button" class="ifs-educore-btn-action ifs-educore-btn-secondary btn-choose-diagram">
-                            <span class="dashicons dashicons-format-image"></span> <?php echo esc_js( __( 'Image', 'ifsedu-school-management' ) ); ?>
+                        <button type="button" class="btn-choose-diagram" style="background:#f1f5f9; border:1px solid #cbd5e1; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:700; cursor:pointer;">
+                            <span class="dashicons dashicons-format-image" style="font-size:13px; width:13px; height:13px; vertical-align:middle;"></span> <?php echo esc_js( __( 'Attach Diagram', 'ifsedu-school-management' ) ); ?>
                         </button>
-                        <button type="button" class="ifs-educore-btn-action ifs-educore-btn-danger btn-remove-diagram" style="${data.image ? 'display:inline-flex;' : 'display:none;'}"><?php echo esc_js( __( 'Delete', 'ifsedu-school-management' ) ); ?></button>
+                        <button type="button" class="btn-remove-diagram" style="background:#fee2e2; color:#dc2626; border:none; padding:4px 8px; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer; ${data.image ? 'display:inline-flex;' : 'display:none;'}"><?php echo esc_js( __( 'Remove', 'ifsedu-school-management' ) ); ?></button>
                     </div>
-                    <div class="ifs-educore-sub-q-row-builder">
-                        <input type="text" name="cq_a[]" class="ifs-educore-input cq-inp-a" placeholder="ক. জ্ঞানমূলক" value="${data.a || ''}">
-                        <input type="number" step="0.5" name="cq_mark_a[]" class="ifs-educore-input ifs-educore-mark-field cq-mark-a" value="${data.mark_a || 1}">
-                    </div>
-                    <div class="ifs-educore-sub-q-row-builder">
-                        <input type="text" name="cq_b[]" class="ifs-educore-input cq-inp-b" placeholder="খ. অনুধাবনমূলক" value="${data.b || ''}">
-                        <input type="number" step="0.5" name="cq_mark_b[]" class="ifs-educore-input ifs-educore-mark-field cq-mark-b" value="${data.mark_b || 2}">
-                    </div>
-                    <div class="ifs-educore-sub-q-row-builder">
-                        <input type="text" name="cq_c[]" class="ifs-educore-input cq-inp-c" placeholder="গ. প্রয়োগমূলক" value="${data.c || ''}">
-                        <input type="number" step="0.5" name="cq_mark_c[]" class="ifs-educore-input ifs-educore-mark-field cq-mark-c" value="${data.mark_c || 3}">
-                    </div>
-                    <div class="ifs-educore-sub-q-row-builder" style="margin-bottom:0;">
-                        <input type="text" name="cq_d[]" class="ifs-educore-input cq-inp-d" placeholder="ঘ. উচ্চতর দক্ষতা" value="${data.d || ''}">
-                        <input type="number" step="0.5" name="cq_mark_d[]" class="ifs-educore-input ifs-educore-mark-field cq-mark-d" value="${data.mark_d || 4}">
+                    <div class="ifs-sub-q-builder-grid">
+                        <div class="ifs-sub-q-row-item">
+                            <input type="text" name="cq_a[]" class="ifs-educore-input cq-inp-a" placeholder="ক. জ্ঞানমূলক প্রশ্ন লিখুন" value="${data.a || ''}" style="flex:1; height:32px;">
+                            <input type="number" step="0.5" name="cq_mark_a[]" class="ifs-educore-input cq-mark-a" value="${data.mark_a || 1}" style="width:50px; height:32px; font-weight:800; text-align:center;">
+                        </div>
+                        <div class="ifs-sub-q-row-item">
+                            <input type="text" name="cq_b[]" class="ifs-educore-input cq-inp-b" placeholder="খ. অনুধাবনমূলক প্রশ্ন লিখুন" value="${data.b || ''}" style="flex:1; height:32px;">
+                            <input type="number" step="0.5" name="cq_mark_b[]" class="ifs-educore-input cq-mark-b" value="${data.mark_b || 2}" style="width:50px; height:32px; font-weight:800; text-align:center;">
+                        </div>
+                        <div class="ifs-sub-q-row-item">
+                            <input type="text" name="cq_c[]" class="ifs-educore-input cq-inp-c" placeholder="গ. প্রয়োগমূলক প্রশ্ন লিখুন" value="${data.c || ''}" style="flex:1; height:32px;">
+                            <input type="number" step="0.5" name="cq_mark_c[]" class="ifs-educore-input cq-mark-c" value="${data.mark_c || 3}" style="width:50px; height:32px; font-weight:800; text-align:center;">
+                        </div>
+                        <div class="ifs-sub-q-row-item">
+                            <input type="text" name="cq_d[]" class="ifs-educore-input cq-inp-d" placeholder="ঘ. উচ্চতর দক্ষতামূলক প্রশ্ন লিখুন" value="${data.d || ''}" style="flex:1; height:32px;">
+                            <input type="number" step="0.5" name="cq_mark_d[]" class="ifs-educore-input cq-mark-d" value="${data.mark_d || 4}" style="width:50px; height:32px; font-weight:800; text-align:center;">
+                        </div>
                     </div>
                 </div>
             `;
             return div;
         }
 
-        // 3. MCQ Question Card Generator
+        // MCQ Card Element Creator
         function createMCQCard(data, num) {
             data = data || {};
             num  = num || 1;
@@ -672,46 +1014,42 @@ function educore_exam_questions_view() {
             div.className = 'ifs-educore-q-card mcq-item';
             div.innerHTML = `
                 <div class="ifs-educore-q-card-header">
-                    <strong class="mcq-item-num">MCQ ${toBn(num)}</strong>
+                    <strong class="mcq-item-num" style="color:#00523c; font-size:13.5px;">MCQ ${toBn(num)}</strong>
                     <div style="display:flex; align-items:center; gap:8px;" onclick="event.stopPropagation();">
-                        <span style="font-size:11px; font-weight:700; color:#64748b;"><?php echo esc_js( __( 'Columns:', 'ifsedu-school-management' ) ); ?></span>
-                        <select name="mcq_columns[]" class="ifs-educore-select mcq-inp-cols" style="width:90px; height:28px; font-size:12px;">
+                        <select name="mcq_columns[]" class="mcq-inp-cols" style="height:26px; font-size:11.5px; border:1px solid #cbd5e1; border-radius:4px;">
                             <option value="1" ${currentCols === 1 ? 'selected' : ''}>১ কলাম</option>
                             <option value="2" ${currentCols === 2 ? 'selected' : ''}>২ কলাম</option>
                             <option value="4" ${currentCols === 4 ? 'selected' : ''}>৪ কলাম</option>
                         </select>
-                        <span style="font-size:11px; font-weight:700; color:#64748b;"><?php echo esc_js( __( 'Ans:', 'ifsedu-school-management' ) ); ?></span>
-                        <select name="mcq_answer[]" class="ifs-educore-select mcq-inp-ans" style="width:70px; height:28px; font-size:12px;">
-                            <option value="opt1" ${data.ans === 'opt1' ? 'selected' : ''}>ক</option>
-                            <option value="opt2" ${data.ans === 'opt2' ? 'selected' : ''}>খ</option>
-                            <option value="opt3" ${data.ans === 'opt3' ? 'selected' : ''}>গ</option>
-                            <option value="opt4" ${data.ans === 'opt4' ? 'selected' : ''}>ঘ</option>
+                        <select name="mcq_answer[]" class="mcq-inp-ans" style="height:26px; font-size:11.5px; border:1px solid #cbd5e1; border-radius:4px; font-weight:700; color:#00523c;">
+                            <option value="opt1" ${data.ans === 'opt1' ? 'selected' : ''}>উ: (ক)</option>
+                            <option value="opt2" ${data.ans === 'opt2' ? 'selected' : ''}>উ: (খ)</option>
+                            <option value="opt3" ${data.ans === 'opt3' ? 'selected' : ''}>উ: (গ)</option>
+                            <option value="opt4" ${data.ans === 'opt4' ? 'selected' : ''}>উ: (ঘ)</option>
                         </select>
-                        <input type="number" step="0.5" name="mcq_mark[]" class="ifs-educore-input ifs-educore-mark-field mcq-inp-mark" style="width:50px; height:28px; font-size:12px;" value="${data.mark || 1}">
-                        <button type="button" class="ifs-educore-btn-action ifs-educore-btn-danger btn-remove-mcq">&times;</button>
+                        <input type="number" step="0.5" name="mcq_mark[]" class="mcq-inp-mark" style="width:45px; height:26px; font-size:12px; font-weight:800; text-align:center; border:1px solid #cbd5e1; border-radius:4px;" value="${data.mark || 1}">
+                        <button type="button" class="btn-remove-mcq" style="background:#fee2e2; color:#dc2626; border:1px solid #fecaca; border-radius:5px; padding:3px 8px; cursor:pointer; font-weight:800;">&times;</button>
                     </div>
                 </div>
-                <div class="ifs-educore-q-card-body">
-                    <div class="ifs-educore-form-group" style="margin-bottom:8px;">
-                        <input type="text" name="mcq_question[]" class="ifs-educore-input mcq-inp-q" placeholder="<?php esc_attr_e( 'Enter question text...', 'ifsedu-school-management' ); ?>" value="${data.q || ''}">
-                    </div>
+                <div>
+                    <input type="text" name="mcq_question[]" class="ifs-educore-input mcq-inp-q" placeholder="<?php esc_attr_e( 'Enter MCQ question title...', 'ifsedu-school-management' ); ?>" value="${data.q || ''}" style="width:100%; height:32px; margin-bottom:6px; font-weight:600;">
                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px;">
-                        <input type="text" name="mcq_opt_1[]" class="ifs-educore-input mcq-inp-o1" placeholder="(ক) অপশন ১" value="${data.opt1 || ''}">
-                        <input type="text" name="mcq_opt_2[]" class="ifs-educore-input mcq-inp-o2" placeholder="(খ) অপশন ২" value="${data.opt2 || ''}">
-                        <input type="text" name="mcq_opt_3[]" class="ifs-educore-input mcq-inp-o3" placeholder="(গ) অপশন ৩" value="${data.opt3 || ''}">
-                        <input type="text" name="mcq_opt_4[]" class="ifs-educore-input mcq-inp-o4" placeholder="(ঘ) অপশন ৪" value="${data.opt4 || ''}">
+                        <input type="text" name="mcq_opt_1[]" class="ifs-educore-input mcq-inp-o1" placeholder="(ক) প্রথম বিকল্প" value="${data.opt1 || ''}" style="height:30px; font-size:12.5px;">
+                        <input type="text" name="mcq_opt_2[]" class="ifs-educore-input mcq-inp-o2" placeholder="(খ) দ্বিতীয় বিকল্প" value="${data.opt2 || ''}" style="height:30px; font-size:12.5px;">
+                        <input type="text" name="mcq_opt_3[]" class="ifs-educore-input mcq-inp-o3" placeholder="(গ) তৃতীয় বিকল্প" value="${data.opt3 || ''}" style="height:30px; font-size:12.5px;">
+                        <input type="text" name="mcq_opt_4[]" class="ifs-educore-input mcq-inp-o4" placeholder="(ঘ) চতুর্থ বিকল্প" value="${data.opt4 || ''}" style="height:30px; font-size:12.5px;">
                     </div>
                 </div>
             `;
             return div;
         }
 
-        // Live Preview Renderer
+        // Live Paper Preview Compiler
         function updateLivePreview() {
-            var examSelect  = document.getElementById('inp_exam_id');
-            var qType       = qTypeSelect.value;
-            var showAns     = document.getElementById('chkShowAnsKey').checked;
-            var pageLayout  = document.getElementById('sel_mcq_page_layout') ? document.getElementById('sel_mcq_page_layout').value : '2';
+            var examSelect = document.getElementById('inp_exam_id');
+            var qType      = qTypeHidden.value;
+            var showAns    = document.getElementById('chkShowAnsKey').checked;
+            var pageLayout = document.getElementById('sel_mcq_page_layout') ? document.getElementById('sel_mcq_page_layout').value : '2';
 
             document.getElementById('pv_exam_name').textContent = examSelect.options[examSelect.selectedIndex] ? examSelect.options[examSelect.selectedIndex].text : 'বার্ষিক পরীক্ষা';
             document.getElementById('pv_class_name').textContent = classSelect.options[classSelect.selectedIndex] ? classSelect.options[classSelect.selectedIndex].text : 'শ্রেণি';
@@ -765,7 +1103,7 @@ function educore_exam_questions_view() {
                         cqHtml += `
                             <div class="nctb-cq-item">
                                 <div class="nctb-cq-stem-wrapper">
-                                    <span style="font-weight:800;">${qNum}.</span>
+                                    <span style="font-weight:900;">${qNum}.</span>
                                     <div style="flex:1;">${stem.replace(/\n/g, '<br>')}</div>
                                 </div>
                                 ${img ? `<div class="nctb-cq-figure"><img src="${img}" alt="চিত্র"></div>` : ''}
@@ -917,7 +1255,7 @@ function educore_exam_questions_view() {
             }
         });
 
-        // Search & Filter
+        // Search & Filter Repository
         var kFilter   = document.getElementById('filter_keyword');
         var cFilter   = document.getElementById('filter_class_search');
         var tFilter   = document.getElementById('filter_type_search');
@@ -945,7 +1283,7 @@ function educore_exam_questions_view() {
         if (cFilter) cFilter.addEventListener('change', filterSavedPapers);
         if (tFilter) tFilter.addEventListener('change', filterSavedPapers);
 
-        // Load Saved Question Paper
+        // Load Saved Question Paper Handler
         document.querySelectorAll('.btn-load-paper').forEach(function(btn) {
             btn.addEventListener('click', function() {
                 var paperId  = this.getAttribute('data-id');
@@ -962,28 +1300,46 @@ function educore_exam_questions_view() {
                         document.getElementById('inp_paper_id').value = p.id;
                         document.getElementById('inp_exam_id').value = p.exam_id;
                         classSelect.value = p.class_name;
-                        qTypeSelect.value = p.question_type;
+                        qTypeHidden.value = p.question_type;
                         subNameHidden.value = p.subject_name;
                         codeInput.value = p.subject_code;
                         document.getElementById('inp_exam_duration').value = p.exam_duration;
                         marksInput.value = p.total_marks;
                         document.getElementById('inp_instructions').value = p.instructions;
 
-                        classSelect.dispatchEvent(new Event('change'));
+                        // Switch segmented tab styling
+                        typeTabs.forEach(function(tab) {
+                            if (tab.getAttribute('data-type') === p.question_type) {
+                                tab.classList.add('is-active');
+                            } else {
+                                tab.classList.remove('is-active');
+                            }
+                        });
 
-                        if (p.question_type === 'CQ' && Array.isArray(p.cq_data)) {
+                        var cqBox  = document.getElementById('section_cq_builder');
+                        var mcqBox = document.getElementById('section_mcq_builder');
+
+                        if (p.question_type === 'CQ') {
+                            cqBox.style.display  = 'block';
+                            mcqBox.style.display = 'none';
                             cqContainer.innerHTML = '';
-                            p.cq_data.forEach(function(cq, idx) {
-                                cqContainer.appendChild(createCQCard(cq, idx + 1));
-                            });
-                        } else if (p.question_type === 'MCQ' && Array.isArray(p.mcq_data)) {
+                            if (Array.isArray(p.cq_data)) {
+                                p.cq_data.forEach(function(cq, idx) {
+                                    cqContainer.appendChild(createCQCard(cq, idx + 1));
+                                });
+                            }
+                        } else {
+                            cqBox.style.display  = 'none';
+                            mcqBox.style.display = 'block';
                             mcqContainer.innerHTML = '';
-                            p.mcq_data.forEach(function(mcq, idx) {
-                                mcqContainer.appendChild(createMCQCard(mcq, idx + 1));
-                            });
+                            if (Array.isArray(p.mcq_data)) {
+                                p.mcq_data.forEach(function(mcq, idx) {
+                                    mcqContainer.appendChild(createMCQCard(mcq, idx + 1));
+                                });
+                            }
                         }
 
-                        qTypeSelect.dispatchEvent(new Event('change'));
+                        classSelect.dispatchEvent(new Event('change'));
                         updateLivePreview();
                         window.scrollTo({ top: document.getElementById('dptQuestionForm').offsetTop - 30, behavior: 'smooth' });
                     }
@@ -1002,7 +1358,7 @@ function educore_exam_questions_view() {
             updateLivePreview();
         });
 
-        // Initial setup run
+        // Initialize Defaults
         cqContainer.appendChild(createCQCard({
             stem: "অনুপম উচ্চশিক্ষিত হলেও ব্যক্তিত্বহীন ও আত্মমর্যাদাহীন এক যুবক। মামার অভিভাবকত্বে সে বড় হয়েছে।",
             a: "অনুপমের ভাষায় সুপুরুষ কাকে বলা হয়েছে?",

@@ -430,7 +430,7 @@ function educore_student_add_edit_view() {
                         </div>
 
                         <div class="ifs-educore-field-group">
-                            <label class="ifs-educore-field-label"><?php esc_html_e( 'Student Mobile Number', 'ifsedu-school-management' ); ?></label>
+                            <label class="ifs-educore-field-label"><?php esc_html_e( 'Student WhatsApp Number', 'ifsedu-school-management' ); ?></label>
                             <input type="text" name="student_phone" class="ifs-educore-input" value="<?php echo $student ? esc_attr( $student->student_phone ) : ''; ?>" placeholder="<?php esc_attr_e( '01700000000', 'ifsedu-school-management' ); ?>">
                         </div>
 

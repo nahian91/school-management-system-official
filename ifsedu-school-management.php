@@ -298,7 +298,7 @@ function educore_execute_database_migration() {
     ) {$charset_collate};";
     dbDelta( $sql_fees );
 
-    // 5. Exams Table
+    // 5. Exams Table (Updated with Attendance Calculation Range)
     $table_exams = $wpdb->prefix . 'sms_exams';
     $sql_exams = "CREATE TABLE {$table_exams} (
         id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -306,11 +306,14 @@ function educore_execute_database_migration() {
         class_name varchar(255) NOT NULL,
         start_date date NOT NULL,
         end_date date NOT NULL,
+        att_start_date date DEFAULT NULL,
+        att_end_date date DEFAULT NULL,
         status varchar(30) DEFAULT 'Upcoming' NOT NULL,
         created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
         PRIMARY KEY  (id),
         KEY status_idx (status),
-        KEY date_range_idx (start_date, end_date)
+        KEY date_range_idx (start_date, end_date),
+        KEY att_date_range_idx (att_start_date, att_end_date)
     ) {$charset_collate};";
     dbDelta( $sql_exams );
 
@@ -362,7 +365,7 @@ function educore_execute_database_migration() {
     ) {$charset_collate};";
     dbDelta( $sql_academic_units );
 
-    // 9. Subjects Table
+   // 9. Subjects Table (Enhanced with Dynamic Breakdown Data)
     $table_subjects = $wpdb->prefix . 'sms_subjects';
     $sql_subjects = "CREATE TABLE {$table_subjects} (
         id bigint(20) NOT NULL AUTO_INCREMENT,
@@ -379,27 +382,36 @@ function educore_execute_database_migration() {
         mcq_pass decimal(5,2) DEFAULT '10.00' NOT NULL,
         practical_marks decimal(5,2) DEFAULT '0.00' NOT NULL,
         practical_pass decimal(5,2) DEFAULT '0.00' NOT NULL,
+        breakdown_data longtext NULL DEFAULT NULL,
         PRIMARY KEY  (id),
         KEY class_id_idx (class_id)
     ) {$charset_collate};";
     dbDelta( $sql_subjects );
 
     // 10. Routine Table
-    $table_routine = $wpdb->prefix . 'sms_routine';
-    $sql_routine = "CREATE TABLE {$table_routine} (
-        id bigint(20) NOT NULL AUTO_INCREMENT,
-        class_id bigint(20) NOT NULL,
-        subject_id bigint(20) NOT NULL,
-        day_name varchar(20) NOT NULL,
-        shift varchar(50) DEFAULT 'No Shift' NOT NULL,
-        start_time time NOT NULL,
-        end_time time NOT NULL,
-        room_no varchar(20) DEFAULT '' NOT NULL,
-        PRIMARY KEY  (id),
-        KEY class_id_idx (class_id),
-        KEY subject_id_idx (subject_id)
-    ) {$charset_collate};";
-    dbDelta( $sql_routine );
+$table_routine = $wpdb->prefix . 'sms_routine';
+$sql_routine = "CREATE TABLE {$table_routine} (
+    id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+    class_id bigint(20) unsigned NOT NULL,
+    section_id bigint(20) unsigned DEFAULT 0 NOT NULL,
+    subject_id bigint(20) unsigned NOT NULL,
+    teacher_id bigint(20) unsigned DEFAULT 0 NOT NULL,
+    day_name varchar(15) NOT NULL,
+    shift varchar(50) DEFAULT 'Day' NOT NULL,
+    start_time time NOT NULL,
+    end_time time NOT NULL,
+    room_no varchar(50) DEFAULT '' NOT NULL,
+    academic_year varchar(20) DEFAULT '' NOT NULL,
+    created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    PRIMARY KEY  (id),
+    KEY class_section_idx (class_id, section_id),
+    KEY subject_id_idx (subject_id),
+    KEY teacher_id_idx (teacher_id),
+    KEY day_time_idx (day_name, start_time, end_time)
+) {$charset_collate};";
+
+require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+dbDelta( $sql_routine );
 
     // 11. Teacher-Subjects Mapping Table
     $table_teacher_subjects = $wpdb->prefix . 'sms_teacher_subjects';

@@ -16,8 +16,15 @@ function educore_exam_add_edit_view() {
         wp_die( esc_html__( 'You do not have sufficient permissions to configure examinations.', 'ifsedu-school-management' ) );
     }
 
-    $table_exams = $wpdb->prefix . 'sms_exams';
-    $table_units = $wpdb->prefix . 'sms_academic_units';
+    $table_exams    = $wpdb->prefix . 'sms_exams';
+    $table_units    = $wpdb->prefix . 'sms_academic_units';
+    $table_subjects = $wpdb->prefix . 'sms_subjects';
+
+    // Auto-migrate column `subject_ids` if missing
+    $col_check = $wpdb->get_results( "SHOW COLUMNS FROM `{$table_exams}` LIKE 'subject_ids'" );
+    if ( empty( $col_check ) ) {
+        $wpdb->query( "ALTER TABLE `{$table_exams}` ADD COLUMN `subject_ids` longtext DEFAULT '' NOT NULL AFTER `class_name`" );
+    }
 
     $list_url = add_query_arg(
         array(
@@ -36,9 +43,12 @@ function educore_exam_add_edit_view() {
     $is_edit   = ( 'edit' === $get_action && $get_id > 0 );
     $edit_exam = null;
 
-    $edit_exam_title  = '';
-    $edit_exam_year   = current_time( 'Y' );
-    $selected_classes = array();
+    $edit_exam_title   = '';
+    $edit_exam_year    = current_time( 'Y' );
+    $selected_classes  = array();
+    $selected_subjects = array();
+    $att_start_default = gmdate( 'Y-01-01' );
+    $att_end_default   = current_time( 'Y-m-d' );
 
     if ( $is_edit ) {
         // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -56,6 +66,14 @@ function educore_exam_add_edit_view() {
             if ( ! empty( $edit_exam->class_name ) ) {
                 $selected_classes = array_map( 'trim', explode( ',', (string) $edit_exam->class_name ) );
             }
+
+            if ( ! empty( $edit_exam->subject_ids ) ) {
+                $decoded_sub = json_decode( $edit_exam->subject_ids, true );
+                $selected_subjects = is_array( $decoded_sub ) ? $decoded_sub : array();
+            }
+
+            $att_start_default = ! empty( $edit_exam->att_start_date ) ? $edit_exam->att_start_date : $edit_exam->start_date;
+            $att_end_default   = ! empty( $edit_exam->att_end_date ) ? $edit_exam->att_end_date : $edit_exam->end_date;
         } else {
             $is_edit = false;
         }
@@ -76,18 +94,33 @@ function educore_exam_add_edit_view() {
         $class_names_input = ( isset( $_POST['class_name'] ) && is_array( $_POST['class_name'] ) ) ? array_map( 'sanitize_text_field', wp_unslash( $_POST['class_name'] ) ) : array();
         $class_name        = ! empty( $class_names_input ) ? implode( ', ', $class_names_input ) : '';
 
-        $start_date = ! empty( $_POST['start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['start_date'] ) ) : current_time( 'Y-m-d' );
-        $end_date   = ! empty( $_POST['end_date'] ) ? sanitize_text_field( wp_unslash( $_POST['end_date'] ) ) : current_time( 'Y-m-d' );
-        $status     = isset( $_POST['status'] ) ? sanitize_text_field( wp_unslash( $_POST['status'] ) ) : 'Upcoming';
+        // Capture Class-Wise Subjects JSON map
+        $raw_subjects_input = ( isset( $_POST['exam_subjects'] ) && is_array( $_POST['exam_subjects'] ) ) ? wp_unslash( $_POST['exam_subjects'] ) : array();
+        $sanitized_subjects = array();
+        foreach ( $raw_subjects_input as $cls_key => $sub_ids ) {
+            if ( is_array( $sub_ids ) ) {
+                $sanitized_subjects[ sanitize_text_field( $cls_key ) ] = array_map( 'absint', $sub_ids );
+            }
+        }
+        $subject_ids_json = wp_json_encode( $sanitized_subjects );
+
+        $start_date     = ! empty( $_POST['start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['start_date'] ) ) : current_time( 'Y-m-d' );
+        $end_date       = ! empty( $_POST['end_date'] ) ? sanitize_text_field( wp_unslash( $_POST['end_date'] ) ) : current_time( 'Y-m-d' );
+        $att_start_date = ! empty( $_POST['att_start_date'] ) ? sanitize_text_field( wp_unslash( $_POST['att_start_date'] ) ) : $start_date;
+        $att_end_date   = ! empty( $_POST['att_end_date'] ) ? sanitize_text_field( wp_unslash( $_POST['att_end_date'] ) ) : $end_date;
+        $status         = isset( $_POST['status'] ) ? sanitize_text_field( wp_unslash( $_POST['status'] ) ) : 'Upcoming';
 
         $data = array(
-            'exam_name'  => $full_exam_name,
-            'class_name' => $class_name,
-            'start_date' => $start_date,
-            'end_date'   => $end_date,
-            'status'     => $status,
+            'exam_name'      => $full_exam_name,
+            'class_name'     => $class_name,
+            'subject_ids'    => $subject_ids_json,
+            'start_date'     => $start_date,
+            'end_date'       => $end_date,
+            'att_start_date' => $att_start_date,
+            'att_end_date'   => $att_end_date,
+            'status'         => $status,
         );
-        $format = array( '%s', '%s', '%s', '%s', '%s' );
+        $format = array( '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s' );
 
         // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
         if ( $exam_id_input > 0 ) {
@@ -117,7 +150,7 @@ function educore_exam_add_edit_view() {
     }
 
     // =========================================================================
-    // Query Distinct Class Names Ordered by sort_order
+    // Query Classes and Associated Subjects
     // =========================================================================
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
     $raw_classes_data = $wpdb->get_results( 
@@ -128,18 +161,12 @@ function educore_exam_add_edit_view() {
          ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
     );
 
-    if ( empty( $raw_classes_data ) ) {
-        $alt_table = $wpdb->get_var( "SHOW TABLES LIKE '%sms_academic_units'" );
-        if ( $alt_table ) {
-            $raw_classes_data = $wpdb->get_results( 
-                "SELECT class_name, MIN(sort_order) as min_sort 
-                 FROM `{$alt_table}` 
-                 WHERE class_name IS NOT NULL AND class_name != '' 
-                 GROUP BY class_name 
-                 ORDER BY min_sort ASC, CAST(class_name AS UNSIGNED) ASC, class_name ASC" 
-            );
-        }
-    }
+    $all_subjects_raw = $wpdb->get_results(
+        "SELECT s.id, s.subject_name, s.subject_code, u.class_name 
+         FROM `{$table_subjects}` s 
+         INNER JOIN `{$table_units}` u ON s.class_id = u.id 
+         ORDER BY u.sort_order ASC, s.subject_order ASC, s.subject_name ASC"
+    );
     // phpcs:enable
 
     $class_list = array();
@@ -148,6 +175,32 @@ function educore_exam_add_edit_view() {
             $c_name = trim( (string) $c_row->class_name );
             if ( ! empty( $c_name ) && ! in_array( $c_name, $class_list, true ) ) {
                 $class_list[] = $c_name;
+            }
+        }
+    }
+
+    // Map subjects by class name
+    $class_subjects_map = array();
+    if ( ! empty( $all_subjects_raw ) ) {
+        foreach ( $all_subjects_raw as $sub_item ) {
+            $cn = trim( (string) $sub_item->class_name );
+            if ( ! isset( $class_subjects_map[ $cn ] ) ) {
+                $class_subjects_map[ $cn ] = array();
+            }
+            // Ensure distinct subjects per class
+            $exists_sub = false;
+            foreach ( $class_subjects_map[ $cn ] as $es ) {
+                if ( $es['id'] === (int) $sub_item->id || strcasecmp( $es['name'], $sub_item->subject_name ) === 0 ) {
+                    $exists_sub = true;
+                    break;
+                }
+            }
+            if ( ! $exists_sub ) {
+                $class_subjects_map[ $cn ][] = array(
+                    'id'   => (int) $sub_item->id,
+                    'name' => $sub_item->subject_name,
+                    'code' => $sub_item->subject_code,
+                );
             }
         }
     }
@@ -312,6 +365,70 @@ function educore_exam_add_edit_view() {
             text-overflow: ellipsis !important;
         }
 
+        /* Class-wise Subject Selector Styles */
+        .ifs-subject-choice-wrapper {
+            margin-top: 16px !important;
+            display: flex !important;
+            flex-direction: column !important;
+            gap: 14px !important;
+        }
+        .ifs-class-subject-box {
+            background: #ffffff !important;
+            border: 1.5px solid #cbd5e1 !important;
+            border-radius: 10px !important;
+            padding: 14px 16px !important;
+        }
+        .ifs-class-subject-header {
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            border-bottom: 1px solid #f1f5f9 !important;
+            padding-bottom: 8px !important;
+            margin-bottom: 10px !important;
+        }
+        .ifs-subject-chips-grid {
+            display: flex !important;
+            flex-wrap: wrap !important;
+            gap: 8px !important;
+        }
+        .ifs-subject-chip {
+            background: #f8fafc !important;
+            border: 1.5px solid #e2e8f0 !important;
+            padding: 6px 10px !important;
+            border-radius: 6px !important;
+            font-size: 12.5px !important;
+            font-weight: 600 !important;
+            color: #334155 !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            cursor: pointer !important;
+            user-select: none !important;
+            transition: all 0.15s ease !important;
+        }
+        .ifs-subject-chip:hover {
+            border-color: #00523c !important;
+            background: #f0fdf4 !important;
+        }
+        .ifs-subject-chip.is-active {
+            border-color: #00523c !important;
+            background: #ecfdf5 !important;
+            color: #047857 !important;
+        }
+        .ifs-subject-chip input[type="checkbox"] {
+            margin: 0 !important;
+            accent-color: #00523c !important;
+            cursor: pointer !important;
+        }
+
+        .ifs-attendance-range-card {
+            background: #f0fdf4 !important;
+            border: 1.5px solid #bbf7d0 !important;
+            border-radius: 12px !important;
+            padding: 16px 20px !important;
+            margin-bottom: 22px !important;
+        }
+
         .ifs-educore-btn-save {
             background: #00523c !important;
             color: #ffffff !important;
@@ -391,15 +508,84 @@ function educore_exam_add_edit_view() {
                 </div>
             </div>
 
-            <!-- Start Date, End Date, Status -->
+            <!-- Class-Wise Subject Choice Section -->
+            <div class="ifs-educore-form-group">
+                <label class="ifs-educore-form-label"><?php esc_html_e( 'Class-Wise Included Exam Subjects', 'ifsedu-school-management' ); ?></label>
+                <small style="color:#64748b; font-size:12px; display:block; margin-top:-4px; margin-bottom:8px;">
+                    <?php esc_html_e( 'Select which specific subjects are evaluated in this exam for each chosen class.', 'ifsedu-school-management' ); ?>
+                </small>
+
+                <div class="ifs-subject-choice-wrapper" id="ifs_class_subjects_container">
+                    <?php if ( ! empty( $class_list ) ) : foreach ( $class_list as $cls_name ) : 
+                        $cls_subs = isset( $class_subjects_map[ $cls_name ] ) ? $class_subjects_map[ $cls_name ] : array();
+                        $saved_subs_for_cls = isset( $selected_subjects[ $cls_name ] ) ? $selected_subjects[ $cls_name ] : array();
+                        $is_cls_active = in_array( $cls_name, $selected_classes, true );
+                    ?>
+                        <div class="ifs-class-subject-box" data-class-box="<?php echo esc_attr( $cls_name ); ?>" style="display: <?php echo $is_cls_active ? 'block' : 'none'; ?>;">
+                            <div class="ifs-class-subject-header">
+                                <strong style="color:#0f172a; font-size:13.5px;"><?php printf( esc_html__( 'Class: %s', 'ifsedu-school-management' ), esc_html( $cls_name ) ); ?></strong>
+                                <?php if ( ! empty( $cls_subs ) ) : ?>
+                                    <button type="button" class="btn-toggle-class-subjects" data-class-target="<?php echo esc_attr( $cls_name ); ?>" style="background:none; border:none; color:#00523c; font-size:11.5px; font-weight:700; cursor:pointer;">
+                                        <?php esc_html_e( 'Select All Subjects', 'ifsedu-school-management' ); ?>
+                                    </button>
+                                <?php endif; ?>
+                            </div>
+
+                            <div class="ifs-subject-chips-grid">
+                                <?php if ( ! empty( $cls_subs ) ) : foreach ( $cls_subs as $s_item ) : 
+                                    $is_sub_checked = empty( $selected_subjects ) || in_array( $s_item['id'], $saved_subs_for_cls, true );
+                                ?>
+                                    <label class="ifs-subject-chip <?php echo $is_sub_checked ? 'is-active' : ''; ?>">
+                                        <input type="checkbox" name="exam_subjects[<?php echo esc_attr( $cls_name ); ?>][]" value="<?php echo esc_attr( $s_item['id'] ); ?>" class="cb-sub-choice" <?php checked( $is_sub_checked ); ?>>
+                                        <span><?php echo esc_html( $s_item['name'] . ( $s_item['code'] ? ' (' . $s_item['code'] . ')' : '' ) ); ?></span>
+                                    </label>
+                                <?php endforeach; else : ?>
+                                    <span style="font-size:12px; color:#94a3b8; font-style:italic;">
+                                        <?php esc_html_e( 'No subjects configured for this class yet in Academics -> Class Wise Subjects.', 'ifsedu-school-management' ); ?>
+                                    </span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    <?php endforeach; endif; ?>
+                </div>
+            </div>
+
+            <!-- Attendance Calculation Period / Range (e.g. June 1 - Sep 20) -->
+            <div class="ifs-attendance-range-card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <div>
+                        <strong style="color:#00523c; font-size:13.5px; text-transform:uppercase; display:flex; align-items:center; gap:6px;">
+                            <span class="dashicons dashicons-calendar-alt"></span>
+                            <?php esc_html_e( 'Attendance Calculation Date Range (Term Scope)', 'ifsedu-school-management' ); ?>
+                        </strong>
+                        <small style="color:#475569; font-size:12px; display:block; margin-top:2px;">
+                            <?php esc_html_e( 'Specifies the date boundaries (e.g., June 01 to September 20) used to count total working days and student attendance percentages for this exam.', 'ifsedu-school-management' ); ?>
+                        </small>
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+                    <div>
+                        <label class="ifs-educore-form-label" style="font-size:12px; color:#065f46;"><?php esc_html_e( 'Attendance Count Starts From', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
+                        <input type="date" name="att_start_date" id="att_start_date" class="ifs-educore-input-field" value="<?php echo esc_attr( $att_start_default ); ?>" required>
+                    </div>
+
+                    <div>
+                        <label class="ifs-educore-form-label" style="font-size:12px; color:#065f46;"><?php esc_html_e( 'Attendance Count Ends On', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
+                        <input type="date" name="att_end_date" id="att_end_date" class="ifs-educore-input-field" value="<?php echo esc_attr( $att_end_default ); ?>" required>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Examination Running Dates & Status -->
             <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px;">
                 <div class="ifs-educore-form-group">
-                    <label class="ifs-educore-form-label"><?php esc_html_e( 'Start Date', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
+                    <label class="ifs-educore-form-label"><?php esc_html_e( 'Exam Start Date', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
                     <input type="date" name="start_date" class="ifs-educore-input-field" value="<?php echo $is_edit ? esc_attr( $edit_exam->start_date ) : esc_attr( current_time( 'Y-m-d' ) ); ?>" required>
                 </div>
 
                 <div class="ifs-educore-form-group">
-                    <label class="ifs-educore-form-label"><?php esc_html_e( 'End Date', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
+                    <label class="ifs-educore-form-label"><?php esc_html_e( 'Exam End Date', 'ifsedu-school-management' ); ?> <span style="color:#ef4444;">*</span></label>
                     <input type="date" name="end_date" class="ifs-educore-input-field" value="<?php echo $is_edit ? esc_attr( $edit_exam->end_date ) : esc_attr( current_time( 'Y-m-d' ) ); ?>" required>
                 </div>
 
@@ -430,6 +616,22 @@ function educore_exam_add_edit_view() {
         var countBadge = document.getElementById('selectedClassCountBadge');
         var form = document.getElementById('educoreExamForm');
 
+        function syncClassSubjectBoxes() {
+            var checkedClasses = [];
+            grid.querySelectorAll('.cb-class:checked').forEach(function(cb) {
+                checkedClasses.push(cb.value);
+            });
+
+            document.querySelectorAll('.ifs-class-subject-box').forEach(function(box) {
+                var cName = box.getAttribute('data-class-box');
+                if (checkedClasses.indexOf(cName) !== -1) {
+                    box.style.display = 'block';
+                } else {
+                    box.style.display = 'none';
+                }
+            });
+        }
+
         function updateSelectionState() {
             var allCheckboxes = grid.querySelectorAll('.cb-class');
             var checkedCheckboxes = grid.querySelectorAll('.cb-class:checked');
@@ -459,6 +661,8 @@ function educore_exam_add_edit_view() {
                 var allVisibleChecked = visibleCheckboxes.length > 0 && visibleCheckboxes.length === visibleChecked.length;
                 toggleBtn.textContent = allVisibleChecked ? '<?php echo esc_js( __( 'Deselect All', 'ifsedu-school-management' ) ); ?>' : '<?php echo esc_js( __( 'Select All', 'ifsedu-school-management' ) ); ?>';
             }
+
+            syncClassSubjectBoxes();
         }
 
         // Live Search Filter
@@ -501,6 +705,44 @@ function educore_exam_add_edit_view() {
                 updateSelectionState();
             });
         }
+
+        // Subject Chip Visual Active Toggles
+        document.querySelectorAll('.cb-sub-choice').forEach(function(cb) {
+            cb.addEventListener('change', function() {
+                var chip = this.closest('.ifs-subject-chip');
+                if (chip) {
+                    if (this.checked) {
+                        chip.classList.add('is-active');
+                    } else {
+                        chip.classList.remove('is-active');
+                    }
+                }
+            });
+        });
+
+        // Toggle All Subjects for a specific class
+        document.querySelectorAll('.btn-toggle-class-subjects').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                var cTarget = this.getAttribute('data-class-target');
+                var box = document.querySelector('.ifs-class-subject-box[data-class-box="' + cTarget + '"]');
+                if (!box) return;
+
+                var subCbs = box.querySelectorAll('.cb-sub-choice');
+                var allChecked = true;
+                subCbs.forEach(function(c) { if (!c.checked) allChecked = false; });
+
+                subCbs.forEach(function(c) {
+                    c.checked = !allChecked;
+                    var chip = c.closest('.ifs-subject-chip');
+                    if (chip) {
+                        if (!allChecked) chip.classList.add('is-active');
+                        else chip.classList.remove('is-active');
+                    }
+                });
+
+                this.textContent = allChecked ? '<?php echo esc_js( __( 'Select All Subjects', 'ifsedu-school-management' ) ); ?>' : '<?php echo esc_js( __( 'Deselect All Subjects', 'ifsedu-school-management' ) ); ?>';
+            });
+        });
 
         // Form Validation
         if (form) {

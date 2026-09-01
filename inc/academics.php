@@ -15,7 +15,7 @@ function educore_academics_tab() {
         wp_die( esc_html__( 'You do not have sufficient permissions to access this module.', 'ifsedu-school-management' ) );
     }
 
-    $allowed_sub_tabs = array( 'units', 'subjects', 'teacher_subjects', 'routine' );
+    $allowed_sub_tabs = array( 'units', 'subjects', 'teacher_subjects', 'routine', 'available_teachers' );
 
     // 2. Set Base Router Variables
     // phpcs:disable WordPress.Security.NonceVerification.Recommended
@@ -45,6 +45,10 @@ function educore_academics_tab() {
 
         case 'routine':
             require_once plugin_dir_path( __FILE__ ) . 'academics/academic-routine.php';
+            break;
+
+        case 'available_teachers':
+            require_once plugin_dir_path( __FILE__ ) . 'academics/academic-available-teachers.php';
             break;
 
         default:

@@ -1,23 +1,23 @@
 <?php
+/**
+ * Master Accounting Module Loader
+ * File: inc/accounting.php
+ * Text Domain: ifsedu-school-management
+ */
+
 if ( ! defined( 'ABSPATH' ) ) {
     exit; // Direct access safety buffer
 }
 
-/**
- * Master Accounting Module Loader
- * File: inc/accounting.php
- */
-
-// Define directory path safely (already inside inc/)
-// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
+// Define directory path safely
 $educore_accounting_dir = plugin_dir_path( __FILE__ ) . 'accounting/';
 
 // Load required sub-files in order
-// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
 $educore_accounting_files = array(
     'accounting-delete.php',    // Ledger deletion handler
-    'accounting-add-edit.php',  // Record entry form view
+    'accounting-add-edit.php',  // Record entry form view (or accounting-add.php depending on your file name)
     'accounting-list.php',      // Master ledger list view & summary stats
+    'accounting-view.php',      // Standalone single voucher view
     'accounting-tab.php',       // Router function: educore_accounting_tab()
 );
 

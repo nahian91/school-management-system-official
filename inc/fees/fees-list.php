@@ -77,7 +77,7 @@ function ifs_educore_handle_update_fee_invoice_ajax() {
 function educore_fees_list_view() {
     global $wpdb;
     $current_user = wp_get_current_user();
-    $roles        = (array) $current_user->roles;
+    $roles         = (array) $current_user->roles;
 
     // 1. Multi-Role Capability Security Matrix (Admins & Accountants)
     $is_admin      = current_user_can( 'manage_options' );
@@ -94,13 +94,14 @@ function educore_fees_list_view() {
 
     // 2. Sanitize and Extract Filter Request Inputs
     // phpcs:disable WordPress.Security.NonceVerification.Recommended
-    $filter_class     = isset( $_GET['filter_class'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_class'] ) ) : '';
-    $filter_section   = isset( $_GET['filter_section'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_section'] ) ) : '';
-    $filter_shift     = isset( $_GET['filter_shift'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_shift'] ) ) : '';
-    $filter_student   = isset( $_GET['filter_student'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_student'] ) ) : '';
-    $filter_date_from = isset( $_GET['filter_date_from'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_date_from'] ) ) : '';
-    $filter_date_to   = isset( $_GET['filter_date_to'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_date_to'] ) ) : '';
-    $filter_status    = isset( $_GET['filter_status'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_status'] ) ) : '';
+    $filter_class      = isset( $_GET['filter_class'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_class'] ) ) : '';
+    $filter_section    = isset( $_GET['filter_section'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_section'] ) ) : '';
+    $filter_shift      = isset( $_GET['filter_shift'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_shift'] ) ) : '';
+    $filter_accountant = isset( $_GET['filter_accountant'] ) ? absint( wp_unslash( $_GET['filter_accountant'] ) ) : 0;
+    $filter_student    = isset( $_GET['filter_student'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_student'] ) ) : '';
+    $filter_date_from  = isset( $_GET['filter_date_from'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_date_from'] ) ) : '';
+    $filter_date_to    = isset( $_GET['filter_date_to'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_date_to'] ) ) : '';
+    $filter_status     = isset( $_GET['filter_status'] ) ? sanitize_text_field( wp_unslash( $_GET['filter_status'] ) ) : '';
     // phpcs:enable WordPress.Security.NonceVerification.Recommended
 
     // 3. Fetch Dropdown Options Dynamically ordered by sort_order
@@ -126,6 +127,14 @@ function educore_fees_list_view() {
 
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, PluginCheck.Security.DirectDB.UnescapedDBParameter
     $all_units = $wpdb->get_results( "SELECT id, class_name, section_name, sort_order FROM `{$table_units}` WHERE section_name != '' ORDER BY sort_order ASC, section_name ASC" );
+    
+    // Fetch Distinct Collectors / Accountants for the Filter Dropdown
+    $collectors_staff = $wpdb->get_results(
+        "SELECT id, full_name, designation FROM `{$table_staff}` WHERE status = 'Active' ORDER BY full_name ASC"
+    );
+    $collectors_users = $wpdb->get_results(
+        "SELECT ID as id, display_name as full_name FROM `{$wpdb->users}` ORDER BY display_name ASC"
+    );
     // phpcs:enable
 
     // 4. Construct SQL Query WHERE Conditions
@@ -145,6 +154,11 @@ function educore_fees_list_view() {
     if ( ! empty( $filter_shift ) ) {
         $where_clauses[] = 's.shift = %s';
         $query_args[]    = $filter_shift;
+    }
+
+    if ( $filter_accountant > 0 ) {
+        $where_clauses[] = 'f.collected_by = %d';
+        $query_args[]    = $filter_accountant;
     }
 
     if ( ! empty( $filter_student ) ) {
@@ -187,11 +201,14 @@ function educore_fees_list_view() {
         $totals = $wpdb->get_row( $totals_sql );
     }
 
-    // 6. Fetch Filtered Ledger Records with Student & Waiver Details
-    $query = "SELECT f.*, s.full_name, s.student_id as s_id, s.class_name, s.section_name, s.shift, s.waiver_percentage, st.full_name as ref_staff_name 
+    // 6. Fetch Filtered Ledger Records with Student, Waiver & Entry Collector Details
+    $query = "SELECT f.*, s.full_name, s.student_id as s_id, s.class_name, s.section_name, s.shift, s.waiver_percentage, 
+                     st.full_name as ref_staff_name, u.display_name as collector_name, col_staff.full_name as col_staff_name
               FROM `{$table_fees}` f 
               LEFT JOIN `{$table_students}` s ON f.student_id = s.id
-              LEFT JOIN `{$table_staff}` st ON s.waiver_staff_id = st.id" . $where_sql . " 
+              LEFT JOIN `{$table_staff}` st ON s.waiver_staff_id = st.id
+              LEFT JOIN `{$wpdb->users}` u ON f.collected_by = u.ID
+              LEFT JOIN `{$table_staff}` col_staff ON f.collected_by = col_staff.id" . $where_sql . " 
               ORDER BY f.id DESC";
 
     if ( ! empty( $query_args ) ) {
@@ -287,6 +304,19 @@ function educore_fees_list_view() {
                     </select>
                 </div>
 
+                <!-- Accountant / Entry Collector Filter -->
+                <div class="ifs-educore-filter-group">
+                    <label for="filter_accountant"><?php esc_html_e( 'Entry / Accountant', 'ifsedu-school-management' ); ?></label>
+                    <select name="filter_accountant" id="filter_accountant" class="ifs-educore-filter-select">
+                        <option value="0"><?php esc_html_e( 'All Accountants', 'ifsedu-school-management' ); ?></option>
+                        <?php if ( ! empty( $collectors_staff ) ) : foreach ( $collectors_staff as $c_st ) : ?>
+                            <option value="<?php echo esc_attr( $c_st->id ); ?>" <?php selected( $filter_accountant, $c_st->id ); ?>>
+                                <?php echo esc_html( $c_st->full_name . ( $c_st->designation ? ' (' . $c_st->designation . ')' : '' ) ); ?>
+                            </option>
+                        <?php endforeach; endif; ?>
+                    </select>
+                </div>
+
                 <!-- Payment Status Filter -->
                 <div class="ifs-educore-filter-group">
                     <label for="filter_status"><?php esc_html_e( 'Status', 'ifsedu-school-management' ); ?></label>
@@ -347,7 +377,7 @@ function educore_fees_list_view() {
             <table class="ifs-educore-table educore-datatable">
                 <thead>
                     <tr>
-                        <th style="width: 110px;"><?php esc_html_e( 'Invoice ID', 'ifsedu-school-management' ); ?></th>
+                        <th style="width: 105px;"><?php esc_html_e( 'Invoice ID', 'ifsedu-school-management' ); ?></th>
                         <th><?php esc_html_e( 'Student Details', 'ifsedu-school-management' ); ?></th>
                         <th><?php esc_html_e( 'Month / Year', 'ifsedu-school-management' ); ?></th>
                         <th><?php esc_html_e( 'Fee Category', 'ifsedu-school-management' ); ?></th>
@@ -355,7 +385,8 @@ function educore_fees_list_view() {
                         <th><?php esc_html_e( 'Paid', 'ifsedu-school-management' ); ?></th>
                         <th><?php esc_html_e( 'Due', 'ifsedu-school-management' ); ?></th>
                         <th><?php esc_html_e( 'Status', 'ifsedu-school-management' ); ?></th>
-                        <th style="text-align: right; width: 110px;"><?php esc_html_e( 'Actions', 'ifsedu-school-management' ); ?></th>
+                        <th><?php esc_html_e( 'Entry / Collector', 'ifsedu-school-management' ); ?></th>
+                        <th style="text-align: right; width: 105px;"><?php esc_html_e( 'Actions', 'ifsedu-school-management' ); ?></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -382,6 +413,10 @@ function educore_fees_list_view() {
                         $class_str      = $fee->class_name ? $fee->class_name : 'Unassigned';
                         $section_str    = ! empty( $fee->section_name ) ? $fee->section_name : 'N/A';
                         $shift_str      = ( ! empty( $fee->shift ) && 'No Shift' !== $fee->shift ) ? ' | ' . $fee->shift : '';
+
+                        // Determine Entry Collector Name & Date
+                        $collector_display = ! empty( $fee->col_staff_name ) ? $fee->col_staff_name : ( ! empty( $fee->collector_name ) ? $fee->collector_name : ( ! empty( $fee->recorded_by ) ? '#' . $fee->recorded_by : __( 'Admin / System', 'ifsedu-school-management' ) ) );
+                        $entry_date_str    = ! empty( $fee->created_at ) ? date_i18n( 'M j, Y h:i A', strtotime( $fee->created_at ) ) : ( ! empty( $fee->payment_date ) ? date_i18n( 'M j, Y', strtotime( $fee->payment_date ) ) : '—' );
                     ?>
                     <tr data-fee-id="<?php echo esc_attr( $fee->id ); ?>">
                         <td>
@@ -412,6 +447,13 @@ function educore_fees_list_view() {
                         <td>
                             <span class="ifs-educore-status-badge <?php echo esc_attr( $status_class ); ?> cell-status">
                                 <?php echo esc_html( $fee->payment_status ); ?>
+                            </span>
+                        </td>
+                        <td>
+                            <strong style="color: #0f172a; font-size: 12px;"><?php echo esc_html( $collector_display ); ?></strong>
+                            <span style="font-size: 10.5px; color: #64748b; display: block; margin-top: 2px;">
+                                <span class="dashicons dashicons-clock" style="font-size: 11px; width: 11px; height: 11px; vertical-align: middle;"></span>
+                                <?php echo esc_html( $entry_date_str ); ?>
                             </span>
                         </td>
                         <td style="text-align: right;">

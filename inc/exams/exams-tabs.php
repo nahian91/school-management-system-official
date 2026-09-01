@@ -3,7 +3,7 @@
  * High-End Academic Examinations Sub-Navigation Engine & Router Matrix
  * File: inc/exams.php
  * Text Domain: ifsedu-school-management
- * Subtabs: All Examinations, Add Examination, Exam Routine, Exam Question Generator
+ * Subtabs: All Examinations, Add Examination, Exam Routine, Exam Question Generator, Exam Details View
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -15,7 +15,7 @@ function educore_exams_tab() {
         wp_die( esc_html__( 'You do not have sufficient permissions to access the examinations module.', 'ifsedu-school-management' ) );
     }
 
-    $allowed_sub_tabs = array( 'list', 'add', 'edit', 'routine', 'questions' );
+    $allowed_sub_tabs = array( 'list', 'add', 'edit', 'view', 'routine', 'questions' );
 
     // phpcs:disable WordPress.Security.NonceVerification.Recommended
     $raw_sub_tab = isset( $_GET['sub'] ) ? sanitize_key( wp_unslash( $_GET['sub'] ) ) : 'list';
@@ -69,6 +69,10 @@ function educore_exams_tab() {
                 <span style="background:#eff6ff; color:#1d4ed8; font-size:12px; font-weight:700; padding:5px 12px; border-radius:20px; border:1px solid #bfdbfe;">
                     <?php esc_html_e( 'Editing Exam Scheme', 'ifsedu-school-management' ); ?>
                 </span>
+            <?php elseif ( 'view' === $sub_tab ) : ?>
+                <span style="background:#f0fdf4; color:#047857; font-size:12px; font-weight:700; padding:5px 12px; border-radius:20px; border:1px solid #bbf7d0;">
+                    <?php esc_html_e( 'Viewing Scheme Details', 'ifsedu-school-management' ); ?>
+                </span>
             <?php endif; ?>
         </div>
 
@@ -78,6 +82,24 @@ function educore_exams_tab() {
             $exam_dir = defined( 'EDUCORE_PATH' ) ? EDUCORE_PATH . 'inc/exams/' : plugin_dir_path( __FILE__ ) . 'exams/';
 
             switch ( $sub_tab ) {
+                case 'view':
+                    $view_files = array(
+                        $exam_dir . 'exam-view.php',
+                        $exam_dir . 'exams-view.php',
+                    );
+                    foreach ( $view_files as $file ) {
+                        if ( file_exists( $file ) ) {
+                            require_once $file;
+                            break;
+                        }
+                    }
+                    if ( function_exists( 'educore_exam_single_view' ) ) {
+                        educore_exam_single_view();
+                    } elseif ( function_exists( 'educore_exam_view' ) ) {
+                        educore_exam_view();
+                    }
+                    break;
+
                 case 'add':
                 case 'edit':
                     $add_edit_files = array(

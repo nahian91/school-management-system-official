@@ -64,32 +64,32 @@ function educore_accounting_list_view() {
     $query_params  = array();
 
     if ( in_array( $filter_type, array( 'Income', 'Expense' ), true ) ) {
-        $where_clauses[] = 'entry_type = %s';
+        $where_clauses[] = 'ac.entry_type = %s';
         $query_params[]  = $filter_type;
     }
 
     if ( ! empty( $filter_category ) ) {
-        $where_clauses[] = 'category_name = %s';
+        $where_clauses[] = 'ac.category_name = %s';
         $query_params[]  = $filter_category;
     }
 
     if ( ! empty( $filter_method ) ) {
-        $where_clauses[] = 'payment_method = %s';
+        $where_clauses[] = 'ac.payment_method = %s';
         $query_params[]  = $filter_method;
     }
 
     if ( ! empty( $from_date ) ) {
-        $where_clauses[] = 'entry_date >= %s';
+        $where_clauses[] = 'ac.entry_date >= %s';
         $query_params[]  = $from_date;
     }
 
     if ( ! empty( $to_date ) ) {
-        $where_clauses[] = 'entry_date <= %s';
+        $where_clauses[] = 'ac.entry_date <= %s';
         $query_params[]  = $to_date;
     }
 
     if ( ! empty( $search_query ) ) {
-        $where_clauses[] = '(title LIKE %s OR voucher_no LIKE %s OR party_name LIKE %s OR note LIKE %s)';
+        $where_clauses[] = '(ac.title LIKE %s OR ac.voucher_no LIKE %s OR ac.party_name LIKE %s OR ac.note LIKE %s)';
         $search_like     = '%' . $wpdb->esc_like( $search_query ) . '%';
         $query_params[]  = $search_like;
         $query_params[]  = $search_like;
@@ -99,17 +99,18 @@ function educore_accounting_list_view() {
 
     $where_sql = ! empty( $where_clauses ) ? ' WHERE ' . implode( ' AND ', $where_clauses ) : '';
 
-    // Fetch Filtered Ledger Records Safely
+    // Fetch Filtered Ledger Records with Staff Name Mapping
     // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare, PluginCheck.Security.DirectDB.UnescapedDBParameter
+    $query = "SELECT ac.*, st.full_name as staff_full_name, u.display_name as wp_user_name 
+              FROM `{$table_accounting}` ac 
+              LEFT JOIN `{$table_staff}` st ON ac.created_by = st.wp_user_id 
+              LEFT JOIN `{$wpdb->users}` u ON ac.created_by = u.ID" . $where_sql . " 
+              ORDER BY ac.entry_date DESC, ac.id DESC";
+
     if ( ! empty( $where_clauses ) ) {
-        $ledger_records = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT * FROM `{$table_accounting}`{$where_sql} ORDER BY entry_date DESC, id DESC",
-                ...$query_params
-            )
-        );
+        $ledger_records = $wpdb->get_results( $wpdb->prepare( $query, ...$query_params ) );
     } else {
-        $ledger_records = $wpdb->get_results( "SELECT * FROM `{$table_accounting}` ORDER BY entry_date DESC, id DESC" );
+        $ledger_records = $wpdb->get_results( $query );
     }
 
     // Dynamic Categories for Dropdown
@@ -150,6 +151,19 @@ function educore_accounting_list_view() {
     $base_tab_url = add_query_arg( array( 'page' => 'school_management_system', 'tab' => 'accounting', 'sub' => 'list' ), admin_url( 'admin.php' ) );
     $add_new_url  = add_query_arg( array( 'page' => 'school_management_system', 'tab' => 'accounting', 'sub' => 'add' ), admin_url( 'admin.php' ) );
     ?>
+
+    <style>
+        .ifs-educore-action-btn-sm.view {
+            background: #f0fdf4;
+            color: #047857;
+            border: 1px solid #bbf7d0;
+        }
+        .ifs-educore-action-btn-sm.view:hover {
+            background: #00523c;
+            color: #ffffff;
+            border-color: #00523c;
+        }
+    </style>
 
     <div class="ifs-educore-acct-container">
 
@@ -333,6 +347,7 @@ function educore_accounting_list_view() {
                             <th><?php esc_html_e( 'Flow', 'ifsedu-school-management' ); ?></th>
                             <th><?php esc_html_e( 'Particulars / Title', 'ifsedu-school-management' ); ?></th>
                             <th><?php esc_html_e( 'Payer / Payee', 'ifsedu-school-management' ); ?></th>
+                            <th><?php esc_html_e( 'Recorded By', 'ifsedu-school-management' ); ?></th>
                             <th><?php esc_html_e( 'Method', 'ifsedu-school-management' ); ?></th>
                             <th><?php esc_html_e( 'Amount', 'ifsedu-school-management' ); ?></th>
                             <th style="text-align: right;"><?php esc_html_e( 'Actions', 'ifsedu-school-management' ); ?></th>
@@ -341,7 +356,18 @@ function educore_accounting_list_view() {
                     <tbody>
                         <?php if ( ! empty( $ledger_records ) ) : foreach ( $ledger_records as $item ) : 
                             $item_id = absint( $item->id );
-                            $edit_url   = add_query_arg(
+                            
+                            $view_url = add_query_arg(
+                                array(
+                                    'page' => 'school_management_system',
+                                    'tab'  => 'accounting',
+                                    'sub'  => 'view',
+                                    'id'   => $item_id,
+                                ),
+                                admin_url( 'admin.php' )
+                            );
+
+                            $edit_url  = add_query_arg(
                                 array(
                                     'page'     => 'school_management_system',
                                     'tab'      => 'accounting',
@@ -367,6 +393,7 @@ function educore_accounting_list_view() {
                             
                             $date_timestamp = ! empty( $item->entry_date ) ? strtotime( $item->entry_date ) : false;
                             $date_formatted = $date_timestamp ? date_i18n( 'd M Y', $date_timestamp ) : '—';
+                            $recorder_name  = ! empty( $item->staff_full_name ) ? $item->staff_full_name : ( ! empty( $item->wp_user_name ) ? $item->wp_user_name : __( 'System / Admin', 'ifsedu-school-management' ) );
                         ?>
                             <tr>
                                 <td>
@@ -401,6 +428,9 @@ function educore_accounting_list_view() {
                                     <?php endif; ?>
                                 </td>
                                 <td>
+                                    <span style="font-size: 12px; font-weight: 700; color: #475569;"><?php echo esc_html( $recorder_name ); ?></span>
+                                </td>
+                                <td>
                                     <span class="ifs-educore-payment-chip"><?php echo esc_html( $item->payment_method ); ?></span>
                                 </td>
                                 <td style="font-weight:800; font-size:15px; color: <?php echo $is_income ? '#059669' : '#dc2626'; ?>;">
@@ -408,6 +438,11 @@ function educore_accounting_list_view() {
                                 </td>
                                 <td style="text-align: right;">
                                     <div class="ifs-educore-row-actions">
+                                        <!-- View Details Page Button -->
+                                        <a href="<?php echo esc_url( $view_url ); ?>" class="ifs-educore-action-btn-sm view" title="<?php esc_attr_e( 'View Voucher Details', 'ifsedu-school-management' ); ?>">
+                                            <span class="dashicons dashicons-visibility" style="font-size:15px; width:15px; height:15px;"></span>
+                                        </a>
+
                                         <?php if ( ! empty( $item->attachment_url ) ) : ?>
                                             <a href="<?php echo esc_url( $item->attachment_url ); ?>" target="_blank" class="ifs-educore-action-btn-sm attachment" title="<?php esc_attr_e( 'View Attached Bill / Slip', 'ifsedu-school-management' ); ?>">
                                                 <span class="dashicons dashicons-media-document"></span>
@@ -426,7 +461,7 @@ function educore_accounting_list_view() {
                             </tr>
                         <?php endforeach; else : ?>
                             <tr>
-                                <td colspan="7">
+                                <td colspan="8">
                                     <div style="padding:40px 20px; text-align:center;">
                                         <span class="dashicons dashicons-money-alt" style="font-size:36px; width:36px; height:36px; color:#cbd5e1; margin-bottom:8px;"></span>
                                         <h4 style="margin:0; color:#0f172a; font-weight:700;"><?php esc_html_e( 'No Financial Records Found', 'ifsedu-school-management' ); ?></h4>

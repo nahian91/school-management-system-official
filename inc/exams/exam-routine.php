@@ -3,11 +3,33 @@
  * Examination Timetable & Routine Scheduler View
  * File: inc/exams/exam-routine.php
  * Text Domain: ifsedu-school-management
- * Updated: Multi-Shift Support & Class Order Priority
+ * Updated: Multi-Shift Support, Class Order Priority & Conditional Section Display (9-12 only)
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
     exit;
+}
+
+/**
+ * Helper to conditionally append section name only for classes 9, 10, 11, and 12.
+ *
+ * @param string $class_name
+ * @param string $section_name
+ * @return string
+ */
+function educore_format_exam_class_label( $class_name, $section_name = '' ) {
+    $class_name   = trim( (string) $class_name );
+    $section_name = trim( (string) $section_name );
+
+    preg_match( '/\d+/', $class_name, $matches );
+    $class_num = ! empty( $matches ) ? intval( $matches[0] ) : 0;
+
+    // Show section ONLY for classes 9, 10, 11, 12
+    if ( in_array( $class_num, array( 9, 10, 11, 12 ), true ) && ! empty( $section_name ) ) {
+        return $class_name . ' (' . $section_name . ')';
+    }
+
+    return $class_name;
 }
 
 function educore_exam_routine_view() {
@@ -172,9 +194,9 @@ function educore_exam_routine_view() {
                     <select name="class_id" id="ifs_educore_er_class_select" class="ifs-educore-select" required>
                         <option value=""><?php esc_html_e( '-- Choose Class --', 'ifsedu-school-management' ); ?></option>
                         <?php foreach ( $classes as $cl ) : 
-                            $sec = ! empty( $cl->section_name ) ? ' (' . $cl->section_name . ')' : '';
+                            $class_display = educore_format_exam_class_label( $cl->class_name, $cl->section_name );
                         ?>
-                            <option value="<?php echo absint( $cl->id ); ?>"><?php echo esc_html( $cl->class_name . $sec ); ?></option>
+                            <option value="<?php echo absint( $cl->id ); ?>"><?php echo esc_html( $class_display ); ?></option>
                         <?php endforeach; ?>
                     </select>
                 </div>
@@ -250,9 +272,9 @@ function educore_exam_routine_view() {
                     <select name="filter_class" style="height:34px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px; font-weight:600;">
                         <option value=""><?php esc_html_e( '-- All Classes --', 'ifsedu-school-management' ); ?></option>
                         <?php foreach ( $classes as $cl ) : 
-                            $sec = ! empty( $cl->section_name ) ? ' (' . $cl->section_name . ')' : '';
+                            $class_display = educore_format_exam_class_label( $cl->class_name, $cl->section_name );
                         ?>
-                            <option value="<?php echo absint( $cl->id ); ?>" <?php selected( $filter_class_id, $cl->id ); ?>><?php echo esc_html( $cl->class_name . $sec ); ?></option>
+                            <option value="<?php echo absint( $cl->id ); ?>" <?php selected( $filter_class_id, $cl->id ); ?>><?php echo esc_html( $class_display ); ?></option>
                         <?php endforeach; ?>
                     </select>
 
@@ -299,9 +321,11 @@ function educore_exam_routine_view() {
                                 $shift_badge_class = 'ifs-educore-shift-day';
                             }
 
-                            $date_timestamp = ! empty( $s->exam_date ) ? strtotime( $s->exam_date ) : false;
+                            $date_timestamp  = ! empty( $s->exam_date ) ? strtotime( $s->exam_date ) : false;
                             $start_timestamp = ! empty( $s->start_time ) ? strtotime( $s->start_time ) : false;
-                            $end_timestamp = ! empty( $s->end_time ) ? strtotime( $s->end_time ) : false;
+                            $end_timestamp   = ! empty( $s->end_time ) ? strtotime( $s->end_time ) : false;
+                            
+                            $formatted_class_entry = educore_format_exam_class_label( $s->class_name, $s->section_name );
                         ?>
                             <tr>
                                 <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9;">
@@ -319,7 +343,7 @@ function educore_exam_routine_view() {
                                 </td>
                                 <td style="padding:10px 12px; border-bottom:1px solid #f1f5f9;">
                                     <span style="background:#eff6ff; color:#2563eb; padding:2px 8px; border-radius:10px; font-weight:700; font-size:11.5px;">
-                                        <?php echo esc_html( $s->class_name . ( $s->section_name ? ' (' . $s->section_name . ')' : '' ) ); ?>
+                                        <?php echo esc_html( $formatted_class_entry ); ?>
                                     </span>
                                     <?php if ( 'No Shift' !== $shift_val ) : ?>
                                         <span class="ifs-educore-shift-badge <?php echo esc_attr( $shift_badge_class ); ?>">
@@ -397,6 +421,8 @@ function educore_exam_routine_view() {
 
                                 $slot_start_ts = ! empty( $slot_item->start_time ) ? strtotime( $slot_item->start_time ) : false;
                                 $slot_end_ts   = ! empty( $slot_item->end_time ) ? strtotime( $slot_item->end_time ) : false;
+                                
+                                $preview_class_label = educore_format_exam_class_label( $slot_item->class_name, $slot_item->section_name );
                             ?>
                                 <div class="ifs-educore-exam-slot-item">
                                     <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px; margin-bottom:6px;">
@@ -425,7 +451,7 @@ function educore_exam_routine_view() {
                                     </div>
 
                                     <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#475569; font-weight:600; margin-top:6px; padding-top:6px; border-top:1px dashed #cbd5e1;">
-                                        <span><?php esc_html_e( 'Class:', 'ifsedu-school-management' ); ?> <strong><?php echo esc_html( $slot_item->class_name . ( $slot_item->section_name ? ' (' . $slot_item->section_name . ')' : '' ) ); ?></strong></span>
+                                        <span><?php esc_html_e( 'Class:', 'ifsedu-school-management' ); ?> <strong><?php echo esc_html( $preview_class_label ); ?></strong></span>
                                         <span><?php esc_html_e( 'Room:', 'ifsedu-school-management' ); ?> <strong><?php echo esc_html( $slot_item->room_no ? $slot_item->room_no : 'N/A' ); ?></strong></span>
                                     </div>
                                 </div>

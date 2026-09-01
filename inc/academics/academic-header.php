@@ -14,7 +14,7 @@ if ( ! current_user_can( 'manage_options' ) && ! current_user_can( 'edit_posts' 
 }
 
 // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
-$educore_allowed_subtabs = array( 'units', 'subjects', 'teacher_subjects', 'routine' );
+$educore_allowed_subtabs = array( 'units', 'subjects', 'teacher_subjects', 'routine', 'available_teachers' );
 
 // Process Status Messages
 $educore_message_text = '';
@@ -69,6 +69,9 @@ $educore_base_url       = add_query_arg( array( 'page' => 'school_management_sys
         <a href="<?php echo esc_url( add_query_arg( 'subtab', 'routine', $educore_base_url ) ); ?>" class="ifs-educore-tab-link <?php echo 'routine' === $educore_current_subtab ? 'active' : ''; ?>">
             <span class="dashicons dashicons-calendar-alt"></span> <?php esc_html_e( 'Class Routine', 'ifsedu-school-management' ); ?>
         </a>
+        <a href="<?php echo esc_url( add_query_arg( 'subtab', 'available_teachers', $educore_base_url ) ); ?>" class="ifs-educore-tab-link <?php echo 'available_teachers' === $educore_current_subtab ? 'active' : ''; ?>">
+            <span class="dashicons dashicons-clock"></span> <?php esc_html_e( 'Available Teachers', 'ifsedu-school-management' ); ?>
+        </a>
     </div>
 
     <!-- Feedback Notice -->
@@ -115,6 +118,17 @@ $educore_base_url       = add_query_arg( array( 'page' => 'school_management_sys
                 }
                 if ( function_exists( 'educore_academics_routine_view' ) ) {
                     educore_academics_routine_view();
+                }
+                break;
+
+            case 'available_teachers':
+                // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound
+                $educore_file = $educore_academics_dir . 'available-teachers.php';
+                if ( file_exists( $educore_file ) ) {
+                    require_once $educore_file;
+                }
+                if ( function_exists( 'educore_academics_available_teachers_view' ) ) {
+                    educore_academics_available_teachers_view();
                 }
                 break;
 
